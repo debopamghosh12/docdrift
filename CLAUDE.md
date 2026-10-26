@@ -28,13 +28,19 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `docdrift/doc_index.py` — split markdown docs into heading-delimited sections
 - `docdrift/candidates.py` — score sections against the ChangeSet; flag missing docs
 - `docdrift/report.py` — rich terminal tables
-- `docdrift/analyzer.py` — LLM: decide which sections are stale, propose rewrites
+- `docdrift/analyzer.py` — LLM: verdict per candidate section (stale/confidence/reason/updated_section); drafts + places new sections for missing docs
+- `docdrift/llm.py` — JSON-mode OpenAI-compatible client; pydantic validation; one retry with the error appended
+- `docdrift/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
+- `docdrift/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section
+- `docdrift/prompts.py` — loads `prompts/*.txt` (`string.Template`, `$placeholders`)
+- `docdrift/doc_editor.py` — apply rewrites/insertions by line range; unified diffs
+- `docdrift/proposal_report.py` — rich tables for verdicts/insertions; colored diffs
 - `docdrift/verifier.py` — check rewrites against actual code
 - `docdrift/pr_writer.py` — build branch/commit/PR with per-change explanations
 - `docdrift/memory.py` — SQLite memory of decisions & reviewer feedback
 - `docdrift/pipeline.py` — orchestrates the end-to-end run
 - `docdrift/server.py` — FastAPI webhook endpoint (HMAC-verified)
-- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N`)
+- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 

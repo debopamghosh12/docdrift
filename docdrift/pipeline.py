@@ -19,6 +19,7 @@ class SourceProvider(Protocol):
 class AnalysisResult(BaseModel):
     pr: PullRequestInfo
     changeset: ChangeSet
+    docs: list[DocFile]
     sections: list[DocSection]
     candidates: list[Candidate]
     missing: list[MissingDoc]
@@ -30,6 +31,7 @@ def analyze(pr: PullRequestInfo, docs: list[DocFile], top_k: int = 10) -> Analys
     return AnalysisResult(
         pr=pr,
         changeset=changeset,
+        docs=docs,
         sections=sections,
         candidates=select_candidates(sections, changeset, top_k=top_k),
         missing=find_missing_docs(sections, changeset),

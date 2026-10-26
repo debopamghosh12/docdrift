@@ -68,12 +68,21 @@ def build_terms(changeset: ChangeSet) -> list[Term]:
 
 
 def score_section(section: DocSection, terms: list[Term]) -> tuple[float, list[str]]:
-    spans = _code_spans(section.text)
-    heading = " ".join(section.heading_path)
+    return score_text(section.text, " ".join(section.heading_path), terms)
+
+
+def is_mentioned(text: str, item: MissingDoc) -> bool:
+    """Whether `text` (e.g. a freshly rewritten section) already documents a missing item."""
+    kind = {"env_var": "env", "route": "route", "cli_flag": "flag"}.get(item.kind, "symbol")
+    return score_text(text, "", [Term(item.name, kind, 1.0)])[0] > 0
+
+
+def score_text(text: str, heading: str, terms: list[Term]) -> tuple[float, list[str]]:
+    spans = _code_spans(text)
     total = 0.0
     matched: list[str] = []
     for term in terms:
-        hits = [m.start() for m in _pattern(term.text, term.kind).finditer(section.text)]
+        hits = [m.start() for m in _pattern(term.text, term.kind).finditer(text)]
         in_code = sum(1 for h in hits if any(start <= h < end for start, end in spans))
         count = in_code if term.is_generic else len(hits)
         if not count:

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "openai/gpt-oss-120b"
+    # Groq's free tier allows 8000 tokens/min for gpt-oss-120b; 0 disables client-side pacing.
+    llm_tpm_limit: int = 8000
+    # Sent as `reasoning_effort` (low|medium|high) when set; empty to omit for other providers.
+    llm_reasoning_effort: str = "low"
 
     database_url: str = "sqlite:///docdrift.db"
 

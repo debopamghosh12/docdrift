@@ -31,6 +31,16 @@ def reconstruct(patch: str) -> tuple[str, str]:
     return "\n".join(before), "\n".join(after)
 
 
+def split_hunks(patch: str) -> list[str]:
+    """Split a patch into hunks, each starting with its `@@` line."""
+    hunks: list[list[str]] = []
+    for line in patch.splitlines():
+        if _HUNK_RE.match(line) or not hunks:
+            hunks.append([])
+        hunks[-1].append(line)
+    return ["\n".join(h) for h in hunks if h]
+
+
 def hunk_headers(patch: str) -> str:
     """Return the enclosing-scope context git prints after each `@@ ... @@` marker."""
     headers = (m.group(1) for line in patch.splitlines() if (m := _HUNK_RE.match(line)))
