@@ -38,13 +38,14 @@ pytest
 
 ## Usage
 
-Analyze a merged PR (no webhook needed):
+Sync the docs with a merged PR (no webhook needed):
 
 ```bash
-docdrift run --repo fastapi/typer --pr 1299 --top 10
+docdrift run --repo debopamghosh12/docdrift-demo --pr 1            # opens/updates the docs PR
+docdrift run --repo debopamghosh12/docdrift-demo --pr 1 --dry-run  # only print the proposed diff
 ```
 
-This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, and new interfaces that no doc mentions.
+This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, the LLM's verified rewrites and new sections, and a diff. Without `--dry-run` it then pushes one commit to `docdrift/pr-<n>` and opens (or updates) a PR titled `docs: sync docs with #<n> (...)`, printing its URL. If there is nothing to change, it comments on the source PR instead. `GITHUB_TOKEN` needs contents and pull-request write access.
 
 ## Decision log
 
@@ -69,3 +70,6 @@ This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), t
 - **2026-10-26 — Repo snapshot via one tarball request.** The verifier needs every source file at the merge commit, not just the changed ones. Downloading the tarball (read in memory, never extracted to disk) replaces ~150 per-file blob calls and supersedes the parallel blob fetching above.
 - **2026-10-26 — One LLM call per doc file (batched sections), relevant hunks only.** Candidate sections from the same file share one prompt (up to 6 sections / 6k chars) with only the hunks matching their terms. On the demo PR this is 2 review calls instead of 9, and a full verified dry run takes ~2m15s on Groq's free tier instead of ~4m15s.
 - **2026-10-26 — Missing items are documented in every file that covers their kind.** Routes/functions: any file mentioning ≥2 siblings (other routes; other names from the same source file). Env vars/flags: a single section must list ≥2 siblings, since they live in tables — otherwise `docs/api.md`'s passing mention of `APP_PORT` would get an env-var section. Siblings removed by the PR count, and if no file qualifies we prefer the file whose rewrite already mentions the item.
+- **2026-10-26 — Docs PRs are one commit on the default branch, rebuilt on every run.** `pr_writer` creates the tree and commit with the Git Data API (one commit regardless of file count), then creates or force-moves `docdrift/pr-<n>`. An open PR from that branch has its title and body edited, so reruns are idempotent and the PR always reflects the latest verified proposals. A file is only written if its content on the default branch still equals the merge-commit version DocDrift edited. Otherwise it is skipped and listed, so someone else's later edit is never silently reverted. With nothing to commit, DocDrift posts a comment on the source PR and edits that same comment on reruns (found by a hidden `<!-- docdrift:source-pr=N -->` marker). PRs from `docdrift/` branches are refused before any analysis, so DocDrift never loops on its own PRs.
+- **2026-10-26 — Section separators are structure, not content.** Trailing blank lines and `---` breaks are kept from the original section and stripped from the model's text. New sections go after the anchor's real content: before trailing "See ..." lines, blank lines and breaks. They copy the file's `---` style. Why: in a real run the model dropped one `---` and doubled another.
+- **2026-10-26 — Invented example values are a verifier failure, not just a prompt rule.** The prompt forbids them, but the model still wrote `NOTES_PAGE_SIZE=30`. A new check fails any `NAME=value` for a repo setting whose value is neither the code's default (`os.getenv("X", "20")` defaults are indexed) nor a value already in the original section. The usual retry then fixes it: live, `NOTES_PAGE_SIZE=10` became `=20` on retry.

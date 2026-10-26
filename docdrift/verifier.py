@@ -5,12 +5,14 @@ Checks (all deterministic, no LLM):
 2. functions/classes/constants/env vars/CLI flags in code exist in the repo
 3. documented `METHOD /path` routes exist
 4. fenced Python blocks parse
-5. cosmetic churn is undone; large unrelated rewrites are flagged
+5. `NAME=value` example settings use values from the code or the original docs
+6. cosmetic churn is undone; large unrelated rewrites are flagged
 """
 
 import ast
 import builtins
 import keyword
+import re
 import textwrap
 from dataclasses import dataclass, field
 
@@ -24,6 +26,8 @@ _JS_GLOBALS = {
     "parseFloat", "encodeURIComponent", "async", "await", "function", "typeof", "new",
 }
 KNOWN_GLOBALS = frozenset(dir(builtins)) | frozenset(keyword.kwlist) | _JS_GLOBALS
+# `APP_PORT=9000` in a shell example or `.env` snippet.
+_ASSIGNMENT_RE = re.compile(r"(?<![\w$-])([A-Z][A-Z0-9_]{2,})=(\"[^\"]*\"|'[^']*'|[^\s`'\";&|]+)")
 
 
 @dataclass
@@ -49,6 +53,7 @@ class Verifier:
             *check_signatures(text, self._code),
             *check_symbols(original, text, self._code),
             *check_routes(original, text, self._code),
+            *check_example_values(original, text, self._code),
             *check_code_blocks(original, text),
         ]
         flag = unrelated_change_flag(original, text, self._changed_names) if original else None
@@ -116,6 +121,25 @@ def check_symbols(original: str, updated: str, code: CodeIndex) -> list[str]:
     return failures
 
 
+def check_example_values(original: str, updated: str, code: CodeIndex) -> list[str]:
+    """`NAME=value` settings in examples must use a value from the code or the original docs."""
+    old = set(_ASSIGNMENT_RE.findall(original))
+    old_values = {_bare(value) for _, value in old}
+    failures: list[str] = []
+    for name, value in sorted(set(_ASSIGNMENT_RE.findall(updated)) - old):
+        if name not in code.env_vars and name not in code.constants:
+            continue  # not a setting of this repo; unknown names are check_symbols' job
+        default = code.env_defaults.get(name) or code.constants.get(name)
+        if _bare(value) in old_values or (default is not None and _bare(value) == _bare(default)):
+            continue
+        hint = f" (default in code: {_bare(default)})" if default is not None else ""
+        failures.append(
+            f"example value {name}={value} is not in the code or the original docs{hint}; "
+            "use the code's value or leave the setting out of the example"
+        )
+    return failures
+
+
 def check_routes(original: str, updated: str, code: CodeIndex) -> list[str]:
     if not code.routes:
         return []
@@ -170,3 +194,7 @@ def _canonical(value: str) -> str:
         return ast.unparse(ast.parse(value, mode="eval"))
     except SyntaxError:
         return value
+
+
+def _bare(value: str) -> str:
+    return value.strip("\"'")

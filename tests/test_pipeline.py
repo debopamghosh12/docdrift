@@ -47,3 +47,19 @@ def test_pipeline_end_to_end() -> None:
     text = out.getvalue()
     assert "connect -> open_connection" in text
     assert "README.md:3-5" in text
+
+
+def test_pipeline_refuses_docdrift_branches() -> None:
+    import pytest
+
+    from docdrift.pipeline import OwnPullRequestError
+
+    class OwnPR(FakeProvider):
+        def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
+            return super().fetch_pull_request(repo_name, number).model_copy(update={"head_ref": "docdrift/pr-7"})
+
+        def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]:
+            raise AssertionError("must stop before fetching docs")
+
+    with pytest.raises(OwnPullRequestError):
+        analyze_pull_request(OwnPR(), "me/lib", 8)

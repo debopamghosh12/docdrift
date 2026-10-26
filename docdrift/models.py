@@ -31,6 +31,7 @@ class PullRequestInfo(BaseModel):
     author: str = ""
     url: str = ""
     base_ref: str
+    head_ref: str = ""
     merge_base_sha: str
     head_sha: str
     merge_commit_sha: str

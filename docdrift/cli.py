@@ -1,6 +1,8 @@
 """Command-line interface for DocDrift."""
 
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import typer
@@ -11,6 +13,7 @@ from docdrift import __version__
 if TYPE_CHECKING:
     from docdrift.llm import JsonLLM
     from docdrift.pipeline import AnalysisResult
+    from docdrift.proposals import DocProposals
 
 app = typer.Typer(help="DocDrift: keep documentation in sync with code.", no_args_is_help=True)
 
@@ -27,18 +30,15 @@ def run(
     pr: int = typer.Option(..., "--pr", help="Merged PR number to analyze."),
     top: int = typer.Option(10, "--top", help="How many candidate sections to keep."),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Ask the LLM for doc updates and print them as a diff; change nothing."
+        False, "--dry-run", help="Print the proposed doc changes as a diff; don't open a PR or comment."
     ),
     min_confidence: float = typer.Option(
         0.5, "--min-confidence", min=0.0, max=1.0, help="Drop LLM proposals below this confidence."
     ),
 ) -> None:
-    """Analyze a merged PR: show its ChangeSet and the doc sections likely to be stale."""
-    import httpx
-    from github import GithubException
-
+    """Sync docs with a merged PR: find stale sections, rewrite and verify them, open a docs PR."""
     from docdrift.config import get_settings
-    from docdrift.github_client import GitHubClient, PullRequestNotMergedError
+    from docdrift.github_client import GitHubClient
     from docdrift.llm import JsonLLM, LLMError
     from docdrift.pipeline import analyze_pull_request
     from docdrift.report import render_analysis
@@ -47,11 +47,51 @@ def run(
     console = Console()
     settings = get_settings()
     if not settings.github_token:
+        if not dry_run:
+            console.print("[red]GITHUB_TOKEN is required to open a docs PR (or pass --dry-run).[/]")
+            raise typer.Exit(code=1)
         console.print("[yellow]GITHUB_TOKEN is not set; using the unauthenticated API (60 req/h).[/]")
-    client = GitHubClient(settings.github_token or None)
     try:
-        with console.status(f"Analyzing {repo}#{pr}..."):
-            result = analyze_pull_request(client, repo, pr, top_k=top)
+        llm = JsonLLM.from_settings(settings)
+    except LLMError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    client = GitHubClient(settings.github_token or None)
+    with _exit_on_errors(console), console.status(f"Analyzing {repo}#{pr}..."):
+        result = analyze_pull_request(client, repo, pr, top_k=top)
+    render_analysis(result, console)
+    proposals = _propose(result, llm, min_confidence, console)
+    if dry_run:
+        return
+
+    from docdrift.github_writer import GitHubWriter
+    from docdrift.pr_writer import PublishAction, PRWriter
+
+    with _exit_on_errors(console), console.status("Publishing..."):
+        published = PRWriter(GitHubWriter(settings.github_token)).publish(result, proposals, min_confidence)
+    for path in published.skipped_files:
+        console.print(f"[yellow]Skipped {path}: it changed on the default branch since the merge.[/]")
+    if published.action == PublishAction.COMMENTED:
+        console.print(f"[green]No doc changes to commit; commented on the source PR:[/] {published.url}")
+    else:
+        console.print(f"[green]Docs PR {published.action.value} ({published.branch}):[/] {published.url}")
+
+
+@contextmanager
+def _exit_on_errors(console: Console) -> Iterator[None]:
+    """Turn expected failures into a one-line message and a non-zero exit (0 for our own PRs)."""
+    import httpx
+    from github import GithubException
+
+    from docdrift.github_client import PullRequestNotMergedError
+    from docdrift.pipeline import OwnPullRequestError
+
+    try:
+        yield
+    except OwnPullRequestError as exc:
+        console.print(f"[yellow]{exc}[/]")
+        raise typer.Exit(code=0) from exc
     except PullRequestNotMergedError as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
@@ -62,20 +102,11 @@ def run(
     except httpx.HTTPError as exc:
         console.print(f"[red]Could not download the repository snapshot: {exc}[/]")
         raise typer.Exit(code=1) from exc
-    render_analysis(result, console)
-
-    if not dry_run:
-        console.print("[dim]Pass --dry-run to have the LLM propose doc updates.[/]")
-        return
-    try:
-        llm = JsonLLM.from_settings(settings)
-    except LLMError as exc:
-        console.print(f"[red]{exc}[/]")
-        raise typer.Exit(code=1) from exc
-    _propose(result, llm, min_confidence, console)
 
 
-def _propose(result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, console: Console) -> None:
+def _propose(
+    result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, console: Console
+) -> "DocProposals":
     from docdrift.analyzer import Analyzer
     from docdrift.doc_editor import apply_proposals, unified_diff
     from docdrift.proposal_report import render_diffs, render_proposals
@@ -89,6 +120,7 @@ def _propose(result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, co
     updated = apply_proposals(result.docs, proposals, min_confidence)
     originals = {d.path: d.content for d in result.docs}
     render_diffs({p: unified_diff(p, originals[p], new) for p, new in updated.items()}, console)
+    return proposals
 
 
 def _force_utf8_stdout() -> None:

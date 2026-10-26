@@ -32,7 +32,7 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `docdrift/reviewer.py` — LLM calls: batched section review (per file), verification retry, new-section drafts
 - `docdrift/proposals.py` — pydantic models for LLM replies, verification status, proposals
 - `docdrift/placement.py` — which doc files cover a missing item's kind
-- `docdrift/verifier.py` — deterministic checks vs. code at merge commit (signatures, symbols, routes, python blocks, minimal diff)
+- `docdrift/verifier.py` — deterministic checks vs. code at merge commit (signatures, symbols, routes, example values, python blocks, minimal diff)
 - `docdrift/code_index.py` — facts from all source files (functions+effective defaults, classes, names, constants, env vars, flags, routes)
 - `docdrift/doc_mentions.py` — claims extracted from markdown (signatures, calls, classes, constants, flags, routes, code blocks)
 - `docdrift/minimal_diff.py` — restore whitespace/table-padding/look-alike churn; unrelated-change ratio
@@ -42,14 +42,15 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `docdrift/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
 - `docdrift/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section
 - `docdrift/prompts.py` — loads `prompts/*.txt` (`string.Template`, `$placeholders`)
-- `docdrift/doc_editor.py` — apply rewrites/insertions by line range; unified diffs
+- `docdrift/doc_editor.py` — apply rewrites (line ranges) then insertions (after real content, matching `---` separators); unified diffs
 - `docdrift/proposal_report.py` — rich tables for verdicts/insertions; colored diffs
-- `docdrift/verifier.py` — check rewrites against actual code
-- `docdrift/pr_writer.py` — build branch/commit/PR with per-change explanations
+- `docdrift/pr_writer.py` — `DocsRepo` protocol + `PRWriter`: one commit on `docdrift/pr-<n>`, open/update the docs PR idempotently, or comment "in sync" on the source PR
+- `docdrift/pr_body.py` — markdown for the docs PR body (summary, table, dropped changes, reasoning) and the sync comment
+- `docdrift/github_writer.py` — PyGithub implementation of `DocsRepo` (Git Data API commits, refs, PRs, comments)
 - `docdrift/memory.py` — SQLite memory of decisions & reviewer feedback
 - `docdrift/pipeline.py` — orchestrates the end-to-end run
 - `docdrift/server.py` — FastAPI webhook endpoint (HMAC-verified)
-- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`)
+- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 

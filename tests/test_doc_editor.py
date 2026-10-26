@@ -105,6 +105,27 @@ def test_insert_matches_thematic_break_separators() -> None:
     assert new.endswith("Delete it.\n\n---\n\n## Update\n\nUpdate it.\n")
 
 
+SEPARATED = DocFile(
+    path="docs/api.md",
+    content="# API\n\n## Errors\n\nOld `X`.\n\n---\n\n## List\n\nList.\n\n---\n\n## Delete\n\nDelete.\n",
+)
+
+
+def test_rewrite_keeps_the_separator_the_model_dropped() -> None:
+    # Seen in a real run: the rewritten Errors section came back without its trailing ---.
+    errors = next(s for s in index_document(SEPARATED) if s.heading == "Errors")
+    verdict = SectionVerdict(stale=True, confidence=0.9, reason="r", updated_section="## Errors\n\nNew `Y`.\n")
+    proposals = DocProposals(findings=[StaleFinding(section=errors, matched_terms=[], verdict=verdict, verification=VERIFIED)])
+    new = apply_proposals([SEPARATED], proposals, 0.5)["docs/api.md"]
+    assert new == SEPARATED.content.replace("Old `X`.", "New `Y`.")
+
+
+def test_new_section_with_its_own_separator_gets_only_one() -> None:
+    # Seen in a real run: the model ended its new section with ---, doubling the separator.
+    new = insert_section("docs/api.md", SEPARATED.content, "List", "## Update\n\nUpdate.\n\n---\n")
+    assert "List.\n\n---\n\n## Update\n\nUpdate.\n\n---\n\n## Delete" in new
+
+
 def test_no_separator_when_file_has_none_or_only_front_matter() -> None:
     content = "---\ntitle: x\n---\n## Get\n\nGet it.\n"
     new = insert_section("docs/a.md", content, None, "## Put\n\nPut it.")

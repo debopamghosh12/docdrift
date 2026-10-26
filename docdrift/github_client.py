@@ -49,6 +49,7 @@ class GitHubClient:
             author=pr.user.login if pr.user else "",
             url=pr.html_url,
             base_ref=pr.base.ref,
+            head_ref=pr.head.ref,
             merge_base_sha=merge_base,
             head_sha=pr.head.sha,
             merge_commit_sha=pr.merge_commit_sha,
@@ -87,9 +88,9 @@ class GitHubClient:
         before = after = None
         if is_source_path(file.filename):
             if status != FileStatus.ADDED:
-                before = _read_text(repo, previous or file.filename, before_ref)
+                before = read_text(repo, previous or file.filename, before_ref)
             if status != FileStatus.REMOVED:
-                after = _read_text(repo, file.filename, after_ref)
+                after = read_text(repo, file.filename, after_ref)
         return ChangedFile(
             path=file.filename,
             status=status,
@@ -100,7 +101,7 @@ class GitHubClient:
         )
 
 
-def _read_text(repo: Repository, path: str, ref: str) -> str | None:
+def read_text(repo: Repository, path: str, ref: str) -> str | None:
     try:
         content = repo.get_contents(path, ref=ref)
         if isinstance(content, list):

@@ -4,6 +4,7 @@ from docdrift.models import SourceFile
 from docdrift.verifier import (
     Verifier,
     check_code_blocks,
+    check_example_values,
     check_routes,
     check_signatures,
     check_symbols,
@@ -160,6 +161,26 @@ def test_routes_already_in_original_are_exempt() -> None:
     assert check_routes("`GET /legacy`", "`GET /legacy` (unchanged)", CODE) == []
     assert route_matches("/notes/:id", "/notes/{note_id}")
     assert not route_matches("/notes", "/notes/{note_id}")
+
+
+# --- example values ----------------------------------------------------------
+
+
+def test_invented_example_values_fail_from_last_run() -> None:
+    # Seen in a real run: the model added NOTES_PAGE_SIZE=30, a value from nowhere.
+    original = "```bash\nAPP_PORT=9000 MAX_NOTE_LENGTH=500 python -m app.main\n```"
+    updated = "```bash\nAPP_PORT=9000 MAX_BODY_LENGTH=500 NOTES_PAGE_SIZE=30 python -m app.main\n```"
+    assert check_example_values(original, updated, CODE) == [
+        "example value NOTES_PAGE_SIZE=30 is not in the code or the original docs (default in code: 20); "
+        "use the code's value or leave the setting out of the example"
+    ]
+    # The renamed setting keeps the original's value (500); the code default is always fine.
+    assert check_example_values(original, updated.replace("=30", "=20"), CODE) == []
+    assert CODE.env_defaults["NOTES_PAGE_SIZE"] == "20"
+
+
+def test_example_values_ignore_unknown_names() -> None:
+    assert check_example_values("", "`PYTHONPATH=src pytest`", CODE) == []
 
 
 # --- 4. code blocks ----------------------------------------------------------

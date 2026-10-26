@@ -83,7 +83,7 @@ def insert_section(path: str, content: str, after_heading: str | None, section: 
     block: list[str] = [""] if point > 0 else []
     if separator:
         block += [separator, ""]
-    block += section.strip("\n").splitlines()
+    block += _strip_structure(section.splitlines())
     if point < len(lines) and lines[point].strip():
         block.append("")
     lines[point:point] = block
@@ -108,11 +108,28 @@ def _trusted(verification: Verification | None) -> bool:
 
 
 def _replacement(section: DocSection, updated: str) -> Edit:
-    # Keep the blank lines that separated this section from the next one (LLMs strip them).
-    total_lines = section.end_line - section.start_line + 1
-    trailing_blank = total_lines - len(section.text.rstrip().splitlines())
-    new_lines = updated.strip("\n").splitlines() + [""] * trailing_blank
+    # The blank lines and --- separating this section from the next are structure, not
+    # content: keep the original ones (LLMs drop or duplicate them).
+    original = section.text.split("\n")
+    content_end = len(original)
+    while content_end > 0 and _is_structural(original[content_end - 1]):
+        content_end -= 1
+    new_lines = _strip_structure(updated.splitlines()) + original[content_end:]
     return Edit(section.path, section.start_line - 1, section.end_line, new_lines)
+
+
+def _is_structural(line: str) -> bool:
+    return not line.strip() or bool(_THEMATIC_BREAK_RE.match(line))
+
+
+def _strip_structure(lines: list[str]) -> list[str]:
+    """Drop leading/trailing blank lines and thematic breaks."""
+    start, end = 0, len(lines)
+    while start < end and _is_structural(lines[start]):
+        start += 1
+    while end > start and _is_structural(lines[end - 1]):
+        end -= 1
+    return lines[start:end]
 
 
 def _anchor_block(sections: list[DocSection], after_heading: str | None, end_of_file: int) -> tuple[int, int]:

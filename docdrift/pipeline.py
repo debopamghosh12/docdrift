@@ -19,6 +19,18 @@ from docdrift.models import (
 )
 
 
+# Branches DocDrift pushes its own docs PRs from; never analyze those (it would loop).
+DOCDRIFT_BRANCH_PREFIX = "docdrift/"
+
+
+class OwnPullRequestError(RuntimeError):
+    pass
+
+
+def is_docdrift_pull_request(pr: PullRequestInfo) -> bool:
+    return pr.head_ref.startswith(DOCDRIFT_BRANCH_PREFIX)
+
+
 class SourceProvider(Protocol):
     def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo: ...
 
@@ -67,6 +79,8 @@ def analyze_pull_request(
     provider: SourceProvider, repo_name: str, number: int, top_k: int = 10
 ) -> AnalysisResult:
     pr = provider.fetch_pull_request(repo_name, number)
+    if is_docdrift_pull_request(pr):
+        raise OwnPullRequestError(f"{repo_name}#{number} is a DocDrift docs PR ({pr.head_ref}); skipping")
     docs = provider.fetch_docs(repo_name, pr.merge_commit_sha)
     sources = provider.fetch_sources(repo_name, pr.merge_commit_sha)
     return analyze(pr, docs, top_k=top_k, sources=sources)

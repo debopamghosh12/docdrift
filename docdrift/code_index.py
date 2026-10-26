@@ -48,6 +48,7 @@ class CodeIndex(BaseModel):
     names: set[str] = Field(default_factory=set)  # module-level assignments and imports
     constants: dict[str, str] = Field(default_factory=dict)
     env_vars: set[str] = Field(default_factory=set)
+    env_defaults: dict[str, str] = Field(default_factory=dict)  # os.getenv("X", "20") -> X: "20"
     cli_flags: set[str] = Field(default_factory=set)
     routes: set[tuple[str, str]] = Field(default_factory=set)
 
@@ -83,6 +84,11 @@ def build_code_index(sources: list[SourceFile]) -> CodeIndex:
 def _index_python(index: CodeIndex, path: str, tree: ast.Module) -> None:
     index.env_vars |= extract_settings_env_vars(tree)
     index.routes |= set(extract_python_routes(tree))
+    for node in ast.walk(tree):
+        default = _env_default(node) if isinstance(node, ast.expr) else None
+        name = node.args[0] if isinstance(node, ast.Call) and node.args else None
+        if isinstance(default, ast.Constant) and isinstance(name, ast.Constant) and isinstance(name.value, str):
+            index.env_defaults[name.value] = str(default.value)
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             _add_function(index, _function_fact(node, node.name, path, is_method=False))
