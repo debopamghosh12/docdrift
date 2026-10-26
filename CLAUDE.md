@@ -57,9 +57,11 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/execution.py` / `execution_report.py` — outcome models / rich table
 - `driftless/memory.py` — SQLite memory of decisions & reviewer feedback
 - `driftless/pipeline.py` — orchestrates the end-to-end run
-- `driftless/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish), used by the server
-- `driftless/jobs.py` — in-memory job registry: one active job per repo+PR, last 20 kept, logging
-- `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, merged PRs -> background job, 202), `GET /health`, `GET /runs`
+- `driftless/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish) and `GitHubSyncer` (post-merge / pre-merge / apply jobs; caches the last pre-merge fixes per PR), used by the server
+- `driftless/premerge.py` — `CheckRepo` protocol + `PreMergeChecker`: one edited PR comment, `Driftless / docs-in-sync` commit status, `/driftless apply` (write access, same-repo branches only, fast-forward)
+- `driftless/premerge_body.py` — markdown for the pre-merge comment (stale table, collapsed diffs, examples) and apply replies
+- `driftless/jobs.py` — in-memory job registry: modes (pre-merge / post-merge / apply), one active job per PR and lane, newer pushes supersede running checks, last 20 kept, logging
+- `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified; merged PRs -> post-merge job, opened/synchronize/reopened/ready_for_review -> pre-merge job, `/driftless apply` comments -> apply job; 202), `GET /health`, `GET /runs`
 - `driftless/cli.py` — typer CLI (`driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5] [--no-execute]`; without --dry-run opens the docs PR; `driftless check --repo owner/name [--ref main] [--fix]` audits every doc example; `driftless serve` starts the webhook server on :8000)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest

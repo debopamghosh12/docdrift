@@ -32,9 +32,11 @@ class PullRequestInfo(BaseModel):
     url: str = ""
     base_ref: str
     head_ref: str = ""
+    head_repo: str = ""  # owner/name the head branch lives in; differs from `repo` for forks
     merge_base_sha: str
     head_sha: str
-    merge_commit_sha: str
+    merge_commit_sha: str  # "" for an open PR
+    merged: bool = True
     files: list[ChangedFile] = Field(default_factory=list)
 
 

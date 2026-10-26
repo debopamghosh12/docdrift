@@ -8,7 +8,7 @@ from driftless.report import render_analysis
 
 
 class FakeProvider:
-    def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
+    def fetch_pull_request(self, repo_name: str, number: int, require_merged: bool = True) -> PullRequestInfo:
         return PullRequestInfo(
             repo=repo_name,
             number=number,
@@ -55,7 +55,7 @@ def test_pipeline_refuses_driftless_branches() -> None:
     from driftless.pipeline import OwnPullRequestError
 
     class OwnPR(FakeProvider):
-        def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
+        def fetch_pull_request(self, repo_name: str, number: int, require_merged: bool = True) -> PullRequestInfo:
             return super().fetch_pull_request(repo_name, number).model_copy(update={"head_ref": "driftless/pr-7"})
 
         def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]:

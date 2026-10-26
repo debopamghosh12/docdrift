@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from driftless.doc_index import is_doc_path
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.proposals import DocProposals, Verification, VerificationStatus
@@ -150,6 +151,8 @@ def render_sync_comment(
         ran = ""
         if execution and execution.total:
             ran = f" All {_plural(execution.total, 'documented example')} pass against the app."
+        if any(is_doc_path(f.path) for f in result.pr.files):
+            ran += " The docs were updated in this PR before it was merged."
         return (
             f"{header}\n✅ **Driftless:** the docs are already in sync with this PR. "
             f"Checked {len(result.candidates)} related section(s) across {docs} doc file(s); "

@@ -38,7 +38,7 @@ def is_driftless_pull_request(pr: PullRequestInfo) -> bool:
 
 
 class SourceProvider(Protocol):
-    def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo: ...
+    def fetch_pull_request(self, repo_name: str, number: int, require_merged: bool = True) -> PullRequestInfo: ...
 
     def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]: ...
 
@@ -52,7 +52,12 @@ class AnalysisResult(BaseModel):
     sections: list[DocSection]
     candidates: list[Candidate]
     missing: list[MissingDoc]
-    code: CodeIndex  # facts at the merge commit, used by the verifier
+    code: CodeIndex  # facts at `ref`, used by the verifier
+    ref: str = ""  # commit docs and sources were read at: the merge commit, or the head pre-merge
+
+    @property
+    def snapshot_ref(self) -> str:
+        return self.ref or self.pr.merge_commit_sha
 
 
 def analyze(
@@ -60,6 +65,7 @@ def analyze(
     docs: list[DocFile],
     top_k: int = 10,
     sources: list[SourceFile] | None = None,
+    ref: str | None = None,
 ) -> AnalysisResult:
     """`sources` defaults to the PR's changed files when a full snapshot isn't available."""
     if sources is None:
@@ -78,15 +84,19 @@ def analyze(
         candidates=select_candidates(sections, changeset, top_k=top_k),
         missing=find_missing_docs(sections, changeset),
         code=build_code_index(sources),
+        ref=ref or pr.merge_commit_sha,
     )
 
 
 def analyze_pull_request(
-    provider: SourceProvider, repo_name: str, number: int, top_k: int = 10
+    provider: SourceProvider, repo_name: str, number: int, top_k: int = 10, pre_merge: bool = False
 ) -> AnalysisResult:
-    pr = provider.fetch_pull_request(repo_name, number)
+    """Post-merge: docs and code at the merge commit. Pre-merge: at the PR head, i.e. the docs as
+    they will be if this PR merges as-is (doc edits already in the PR count)."""
+    pr = provider.fetch_pull_request(repo_name, number, require_merged=not pre_merge)
     if is_driftless_pull_request(pr):
         raise OwnPullRequestError(f"{repo_name}#{number} is a Driftless docs PR ({pr.head_ref}); skipping")
-    docs = provider.fetch_docs(repo_name, pr.merge_commit_sha)
-    sources = provider.fetch_sources(repo_name, pr.merge_commit_sha)
-    return analyze(pr, docs, top_k=top_k, sources=sources)
+    ref = pr.head_sha if pre_merge else pr.merge_commit_sha
+    docs = provider.fetch_docs(repo_name, ref)
+    sources = provider.fetch_sources(repo_name, ref)
+    return analyze(pr, docs, top_k=top_k, sources=sources, ref=ref)

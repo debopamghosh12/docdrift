@@ -29,15 +29,16 @@ class GitHubClient:
         self._repos: dict[str, Repository] = {}
         self._snapshots: dict[tuple[str, str], dict[str, str]] = {}
 
-    def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
-        """Fetch a merged PR with patches and full before/after content for source files.
+    def fetch_pull_request(self, repo_name: str, number: int, require_merged: bool = True) -> PullRequestInfo:
+        """Fetch a PR with patches and full before/after content for source files.
 
         "Before" is the merge base and "after" is the PR head, which is exactly what the
         PR's patches describe, so unrelated commits on the base branch don't leak in.
+        Pre-merge checks pass `require_merged=False` to analyze an open PR.
         """
         repo = self._repo(repo_name)
         pr = repo.get_pull(number)
-        if not pr.merged:
+        if require_merged and not pr.merged:
             raise PullRequestNotMergedError(f"{repo_name}#{number} is not merged")
         merge_base = repo.compare(pr.base.sha, pr.head.sha).merge_base_commit.sha
         files = [self._changed_file(repo, f, merge_base, pr.head.sha) for f in pr.get_files()]
@@ -50,9 +51,11 @@ class GitHubClient:
             url=pr.html_url,
             base_ref=pr.base.ref,
             head_ref=pr.head.ref,
+            head_repo=pr.head.repo.full_name if pr.head.repo else "",  # None once a fork is deleted
             merge_base_sha=merge_base,
             head_sha=pr.head.sha,
-            merge_commit_sha=pr.merge_commit_sha,
+            merge_commit_sha=pr.merge_commit_sha if pr.merged else "",
+            merged=pr.merged,
             files=files,
         )
 

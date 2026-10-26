@@ -1,20 +1,28 @@
-"""FastAPI webhook server: a merged PR on a watched repo triggers a background docs sync."""
+"""FastAPI webhook server for a watched repo.
+
+- `pull_request` opened / synchronize / reopened / ready_for_review: pre-merge check of the head
+  commit (one PR comment, edited in place, and a commit status).
+- `pull_request` closed + merged: post-merge sync (docs PR, or an in-sync comment).
+- `issue_comment` "/driftless apply" on an open PR: commit the verified doc fixes to its branch.
+"""
 
 import hashlib
 import hmac
 import json
 import logging
-from functools import partial
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from driftless.config import Settings, get_settings
-from driftless.jobs import Job, JobStore, SyncFn
+from driftless.jobs import Enqueued, Job, JobMode, JobStore, Syncer
 from driftless.pipeline import is_own_branch
+from driftless.premerge_body import APPLY_COMMAND
 
 logger = logging.getLogger("driftless.server")
+
+PRE_MERGE_ACTIONS = frozenset({"opened", "synchronize", "reopened", "ready_for_review"})
 
 
 def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
@@ -25,16 +33,16 @@ def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature.removeprefix("sha256="))
 
 
-def create_app(settings: Settings | None = None, sync: SyncFn | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, syncer: Syncer | None = None) -> FastAPI:
     settings = settings or get_settings()
-    if sync is None:
-        from driftless.sync import sync_pull_request
+    if syncer is None:
+        from driftless.sync import GitHubSyncer
 
-        sync = partial(sync_pull_request, settings)
+        syncer = GitHubSyncer(settings)
     if not settings.webhook_secret:
         logger.warning("WEBHOOK_SECRET is not set; every webhook delivery will be rejected")
 
-    store = JobStore(sync)
+    store = JobStore(syncer)
     app = FastAPI(title="Driftless")
     app.state.jobs = store
 
@@ -63,23 +71,58 @@ def create_app(settings: Settings | None = None, sync: SyncFn | None = None) -> 
 
         if x_github_event == "ping":
             return JSONResponse({"status": "ok", "zen": payload.get("zen")})
-        if x_github_event != "pull_request":
-            return _ignored(f"event {x_github_event!r}")
-
-        pr = payload.get("pull_request") or {}
-        if payload.get("action") != "closed" or not pr.get("merged"):
-            return _ignored("pull request was not merged")
-        if is_own_branch(pr.get("head", {}).get("ref", "")):
-            return _ignored("Driftless's own docs PR")
-
-        repo, number = payload["repository"]["full_name"], int(pr["number"])
-        job, created = store.enqueue(repo, number)
-        if not created:
-            return JSONResponse({"status": "already running", "job": job.model_dump(mode="json")})
-        background.add_task(store.run, job)
-        return JSONResponse({"status": "queued", "job": job.model_dump(mode="json")}, status_code=202)
+        if x_github_event == "pull_request":
+            return _pull_request(store, background, payload)
+        if x_github_event == "issue_comment":
+            return _issue_comment(store, background, payload)
+        return _ignored(f"event {x_github_event!r}")
 
     return app
+
+
+def _pull_request(store: JobStore, background: BackgroundTasks, payload: dict[str, Any]) -> JSONResponse:
+    pr = payload.get("pull_request") or {}
+    action = payload.get("action")
+    if is_own_branch(pr.get("head", {}).get("ref", "")):
+        return _ignored("Driftless's own docs PR")
+    repo, number = payload["repository"]["full_name"], int(pr["number"])
+    if action == "closed":
+        if not pr.get("merged"):
+            return _ignored("pull request was closed without merging")
+        return _queue(store, background, store.enqueue(repo, number, JobMode.POST_MERGE))
+    if action in PRE_MERGE_ACTIONS:
+        if pr.get("draft"):
+            return _ignored("draft pull request")
+        head_sha = pr.get("head", {}).get("sha", "")
+        return _queue(store, background, store.enqueue(repo, number, JobMode.PRE_MERGE, head_sha=head_sha))
+    return _ignored(f"pull_request action {action!r}")
+
+
+def _issue_comment(store: JobStore, background: BackgroundTasks, payload: dict[str, Any]) -> JSONResponse:
+    issue, comment = payload.get("issue") or {}, payload.get("comment") or {}
+    if payload.get("action") != "created":
+        return _ignored("comment was not created")
+    if not issue.get("pull_request"):
+        return _ignored("comment is not on a pull request")
+    if (comment.get("body") or "").strip() != APPLY_COMMAND:
+        return _ignored("not a Driftless command")
+    if issue.get("state") != "open":
+        return _ignored("pull request is closed")
+    # Write access and fork checks need API calls, so the job does them (and replies if refused).
+    user = (comment.get("user") or {}).get("login", "")
+    enqueued = store.enqueue(payload["repository"]["full_name"], int(issue["number"]), JobMode.APPLY, requested_by=user)
+    return _queue(store, background, enqueued)
+
+
+def _queue(store: JobStore, background: BackgroundTasks, enqueued: Enqueued) -> JSONResponse:
+    job = enqueued.job.model_dump(mode="json")
+    if not enqueued.created:
+        return JSONResponse({"status": "already running", "job": job})
+    background.add_task(store.run, enqueued.job)
+    body: dict[str, Any] = {"status": "queued", "job": job}
+    if enqueued.superseded:
+        body["superseded"] = enqueued.superseded.id
+    return JSONResponse(body, status_code=202)
 
 
 def _ignored(reason: str) -> JSONResponse:

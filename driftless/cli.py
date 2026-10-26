@@ -69,7 +69,7 @@ def run(
     render_analysis(result, console)
     proposals = _propose(result, llm, min_confidence, console)
     if execute and settings.execute_examples:
-        files = client.fetch_files(repo, result.pr.merge_commit_sha)
+        files = client.fetch_files(repo, result.snapshot_ref)
         proposals.execution = _execute_all(result, proposals, files, llm, min_confidence, settings, console)
     if dry_run:
         return

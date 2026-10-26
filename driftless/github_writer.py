@@ -1,10 +1,11 @@
-"""GitHub write operations for the docs PR (PyGithub implementation of pr_writer.DocsRepo)."""
+"""GitHub write operations (PyGithub implementation of pr_writer.DocsRepo and premerge.CheckRepo)."""
 
 from github import Auth, Github, GithubException, InputGitTreeElement
 from github.Repository import Repository
 
 from driftless.github_client import read_text
 from driftless.pr_writer import CommentRef, PullRequestRef
+from driftless.premerge import STATUS_CONTEXT, PullState
 
 
 class GitHubWriter:
@@ -65,6 +66,32 @@ class GitHubWriter:
         comment = self._repo(repo).get_issue_comment(comment_id)
         comment.edit(body)
         return comment.html_url
+
+    def set_status(self, repo: str, sha: str, state: str, description: str, target_url: str | None = None) -> None:
+        extra = {"target_url": target_url} if target_url else {}
+        self._repo(repo).get_commit(sha).create_status(
+            state=state, description=description[:140], context=STATUS_CONTEXT, **extra
+        )
+
+    def pull_state(self, repo: str, number: int) -> PullState:
+        pull = self._repo(repo).get_pull(number)
+        return PullState(
+            number=number,
+            open=pull.state == "open",
+            head_ref=pull.head.ref,
+            head_sha=pull.head.sha,
+            head_repo=pull.head.repo.full_name if pull.head.repo else None,
+            base_repo=pull.base.repo.full_name,
+        )
+
+    def permission(self, repo: str, user: str) -> str:
+        try:
+            return self._repo(repo).get_collaborator_permission(user)
+        except GithubException:  # not a collaborator / unknown user
+            return "none"
+
+    def advance_branch(self, repo: str, branch: str, sha: str) -> None:
+        self._repo(repo).get_git_ref(f"heads/{branch}").edit(sha, force=False)
 
     def _repo(self, name: str) -> Repository:
         if name not in self._repos:

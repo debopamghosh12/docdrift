@@ -68,6 +68,8 @@ class PublishAction(str, Enum):
     OPENED = "opened"
     UPDATED = "updated"
     COMMENTED = "commented"
+    COMMITTED = "committed"  # `/driftless apply` pushed doc fixes to the PR's own branch
+    DECLINED = "declined"  # `/driftless apply` refused (fork, no write access, closed PR)
 
 
 class PublishResult(BaseModel):
@@ -76,6 +78,7 @@ class PublishResult(BaseModel):
     branch: str | None = None
     files: list[str] = Field(default_factory=list)
     skipped_files: list[str] = Field(default_factory=list)  # changed on the default branch since
+    check_state: str | None = None  # pre-merge commit status: success / failure / error
 
 
 CHECK_BRANCH = f"{DRIFTLESS_BRANCH_PREFIX}fix-examples"
