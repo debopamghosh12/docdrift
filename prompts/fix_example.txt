@@ -1,0 +1,37 @@
+A documented HTTP example was executed against the real application and did not match its documented result. Fix the documentation so the example is correct.
+
+## Documentation file
+$file
+
+## The example as documented (request and documented result)
+<example>
+$snippet
+</example>
+
+## What actually happened when it ran
+Request: $request
+Response status: $actual_status
+Response body:
+<response>
+$actual_body
+</response>
+
+Mismatches:
+$failures
+
+Examples in this file run in order against one fresh app instance, so earlier examples may have created data this one reads.
+
+## Relevant application code
+$code
+
+Instructions:
+- Decide what is wrong. If the request is wrong (wrong method, path, field names or headers for what the text describes), fix the request so it does what the surrounding text says. If the documented result is wrong (status code, response shape), change it to match the actual response.
+- When you change a documented response, copy the actual status code and the JSON structure (keys and value types) exactly, but keep the docs' example values and JSON formatting: do not paste ids, timestamps or other values that only come from this test run.
+- Never invent endpoints, fields or status codes that the code and the actual response don't show.
+- "replacement" is the complete corrected snippet: the same Markdown as inside <example> (without the <example> tags), with only the wrong parts changed. Keep code fences, prose, formatting and line layout. It must still contain exactly one request.
+- If you cannot tell how to fix it, set "fixed" to false and "replacement" to null.
+- "target" is what you changed: "request", "response", "both" or "none".
+- "reason" is one sentence a reviewer can read: what was wrong and what you changed.
+
+Reply with a JSON object of exactly this shape:
+{"fixed": true or false, "target": "request|response|both|none", "reason": "string", "replacement": "string or null"}

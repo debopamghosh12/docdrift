@@ -1,6 +1,7 @@
 import pytest
 
 from driftless.doc_index import index_document
+from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.models import DocFile, MissingDoc, PullRequestInfo
 from driftless.pipeline import AnalysisResult, OwnPullRequestError, analyze
 from driftless.pr_writer import CommentRef, PRWriter, PublishAction, PullRequestRef
@@ -228,3 +229,31 @@ def test_never_runs_on_driftless_branches(head_ref: str) -> None:
     with pytest.raises(OwnPullRequestError):
         PRWriter(gh).publish(result(head_ref=head_ref), proposals(), 0.5)
     assert not gh.pulls and not gh.comments and set(gh.branches) == {"main"}
+
+
+def example_report(readme: str) -> ExecutionReport:
+    fixed = ExampleOutcome(
+        file="README.md", label="GET /a", line=9, status=ExampleStatus.FIXED, expected_status=201,
+        actual_status=200, final_expected_status=200, final_actual_status=200,
+        failures=["status is 200, docs say 201"], fixes=["GET /a returns 200."],
+    )
+    return ExecutionReport(outcomes=[fixed], contents={"README.md": readme, "docs/api.md": API.content}, app="app:app")
+
+
+def test_check_fix_opens_one_examples_pr_and_updates_it_on_rerun() -> None:
+    gh = FakeGitHub()
+    originals = {"README.md": README.content, "docs/api.md": API.content}
+    fixed_readme = README.content.replace("Get a.", "Get a. `200 OK`")
+
+    published = PRWriter(gh).publish_example_fixes(REPO, "main", originals, example_report(fixed_readme))
+    assert published is not None and published.action == PublishAction.OPENED
+    assert published.branch == "driftless/fix-examples" and published.files == ["README.md"]
+    pull = gh.pulls[100]
+    assert pull["title"] == "docs: fix examples that fail when run"
+    assert "### 🧪 Executed examples: 1/1 passing" in pull["body"]
+    assert "🔁 fixed after running" in pull["body"]
+
+    again = PRWriter(gh).publish_example_fixes(REPO, "main", originals, example_report(fixed_readme))
+    assert again is not None and again.action == PublishAction.UPDATED and len(gh.pulls) == 1
+
+    assert PRWriter(gh).publish_example_fixes(REPO, "main", originals, example_report(README.content)) is None

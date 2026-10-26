@@ -29,6 +29,22 @@ def sync_pull_request(
     except LLMError as exc:
         raise SyncConfigError(str(exc)) from exc
 
-    result = analyze_pull_request(GitHubClient(settings.github_token), repo, number, top_k=top_k)
+    client = GitHubClient(settings.github_token)
+    result = analyze_pull_request(client, repo, number, top_k=top_k)
     proposals = Analyzer(llm).propose(result, min_confidence=min_confidence)
+    if settings.execute_examples:
+        from pathlib import Path
+
+        from driftless.example_fixer import ExampleFixer
+        from driftless.executable_docs import execute_updated_docs
+
+        proposals.execution = execute_updated_docs(
+            result.docs,
+            client.fetch_files(repo, result.pr.merge_commit_sha),
+            proposals,
+            min_confidence,
+            ExampleFixer(llm),
+            Path(settings.sandbox_cache_dir),
+            settings.sandbox_startup_timeout,
+        )
     return PRWriter(GitHubWriter(settings.github_token)).publish(result, proposals, min_confidence)

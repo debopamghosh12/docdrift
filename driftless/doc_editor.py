@@ -56,6 +56,17 @@ def apply_proposals(docs: list[DocFile], proposals: DocProposals, min_confidence
     return {path: text for path, text in contents.items() if text != originals[path]}
 
 
+def final_docs(docs: list[DocFile], proposals: DocProposals, min_confidence: float) -> dict[str, str]:
+    """Like apply_proposals, plus fixes made to examples after running them."""
+    updated = apply_proposals(docs, proposals, min_confidence)
+    if proposals.execution:
+        originals = {d.path: d.content for d in docs}
+        for path, text in proposals.execution.contents.items():
+            if path in originals and text != originals[path]:
+                updated[path] = text
+    return updated
+
+
 def apply_edits(content: str, edits: list[Edit]) -> str:
     """Apply non-overlapping line-range edits bottom-up so earlier line numbers stay valid."""
     if not edits:

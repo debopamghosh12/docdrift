@@ -71,6 +71,10 @@ class GitHubClient:
             if is_source_path(p) and not is_test_path(p)
         ]
 
+    def fetch_files(self, repo_name: str, ref: str) -> dict[str, str]:
+        """The whole snapshot at `ref` (docs, sources, requirements/config), to start the app from."""
+        return dict(self._snapshot(repo_name, ref))
+
     def _snapshot(self, repo_name: str, ref: str) -> dict[str, str]:
         key = (repo_name, ref)
         if key not in self._snapshots:

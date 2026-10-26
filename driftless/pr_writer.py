@@ -11,14 +11,15 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from driftless.doc_editor import apply_proposals
+from driftless.doc_editor import final_docs
 from driftless.pipeline import (
     DRIFTLESS_BRANCH_PREFIX,
     AnalysisResult,
     OwnPullRequestError,
     is_driftless_pull_request,
 )
-from driftless.pr_body import has_source_marker, render_pr_body, render_sync_comment
+from driftless.execution import ExecutionReport
+from driftless.pr_body import has_source_marker, render_check_body, render_pr_body, render_sync_comment
 from driftless.proposals import DocProposals
 
 
@@ -77,6 +78,9 @@ class PublishResult(BaseModel):
     skipped_files: list[str] = Field(default_factory=list)  # changed on the default branch since
 
 
+CHECK_BRANCH = f"{DRIFTLESS_BRANCH_PREFIX}fix-examples"
+
+
 def branch_name(number: int) -> str:
     return f"{DRIFTLESS_BRANCH_PREFIX}pr-{number}"
 
@@ -94,7 +98,7 @@ class PRWriter:
         if is_driftless_pull_request(pr):
             raise OwnPullRequestError(f"{pr.repo}#{pr.number} is a Driftless docs PR; not writing docs for it")
 
-        updated = apply_proposals(result.docs, proposals, min_confidence)
+        updated = final_docs(result.docs, proposals, min_confidence)
         if not updated:
             return self._comment(result, render_sync_comment(result, proposals, min_confidence))
 
@@ -116,6 +120,34 @@ class PRWriter:
         else:
             ref, action = self._gh.create_pull(pr.repo, branch, base, title, body), PublishAction.OPENED
         return PublishResult(action=action, url=ref.url, branch=branch, files=sorted(files), skipped_files=skipped)
+
+    def publish_example_fixes(
+        self, repo: str, ref: str, originals: dict[str, str], report: ExecutionReport
+    ) -> PublishResult | None:
+        """Open (or update) one PR with the examples `driftless check --fix` repaired.
+
+        None when nothing changed, or every changed file moved on the default branch since `ref`.
+        """
+        changed = {p: t for p, t in report.contents.items() if p in originals and t != originals[p]}
+        if not changed:
+            return None
+        base, base_sha = self._gh.default_branch(repo)
+        files = {p: t for p, t in changed.items() if self._gh.read_file(repo, p, base_sha) == originals[p]}
+        skipped = sorted(set(changed) - set(files))
+        if not files:
+            return None
+        commit = self._gh.commit_files(repo, base_sha, files, "docs: fix examples that fail when run")
+        self._gh.set_branch(repo, CHECK_BRANCH, commit)
+        title = "docs: fix examples that fail when run"
+        body = render_check_body(repo, ref, report, sorted(files))
+        existing = self._gh.find_open_pull(repo, CHECK_BRANCH)
+        if existing:
+            ref_, action = self._gh.update_pull(repo, existing.number, title, body), PublishAction.UPDATED
+        else:
+            ref_, action = self._gh.create_pull(repo, CHECK_BRANCH, base, title, body), PublishAction.OPENED
+        return PublishResult(
+            action=action, url=ref_.url, branch=CHECK_BRANCH, files=sorted(files), skipped_files=skipped
+        )
 
     def _unchanged_since_merge(
         self, result: AnalysisResult, updated: dict[str, str], base_sha: str

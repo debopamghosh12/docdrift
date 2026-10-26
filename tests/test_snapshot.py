@@ -22,6 +22,13 @@ def test_reads_docs_and_sources_and_strips_prefix() -> None:
             "app/main.py": b"x = 1",
             "logo.png": b"\x89PNG",
             "src/latin1.py": "caf\u00e9".encode("latin-1"),
+            "requirements.txt": b"fastapi",
+            "notes.txt": b"scratch",
         }
     )
-    assert read_tarball(data) == {"README.md": "# Hi", "docs/guide.md": "guide", "app/main.py": "x = 1"}
+    assert read_tarball(data) == {
+        "README.md": "# Hi",
+        "docs/guide.md": "guide",
+        "app/main.py": "x = 1",
+        "requirements.txt": "fastapi",
+    }

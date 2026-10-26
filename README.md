@@ -10,13 +10,12 @@ Docs rot silently. Every merged PR can rename a flag, change a default, or remov
 
 ## How it works
 
-_Placeholder — to be filled in as the pipeline lands._
-
 1. A PR is merged on a watched repo → GitHub webhook hits Driftless.
 2. Driftless reads the diff and indexes `README.md` and `docs/**/*.md` into sections.
 3. An LLM identifies sections the change made stale and rewrites only those.
 4. A verifier checks each rewrite against the actual code.
-5. Driftless opens a follow-up PR explaining every change, and remembers reviewer feedback for next time.
+5. Driftless starts the app and runs every request example in the updated docs, fixing examples until they actually work.
+6. Driftless opens a follow-up PR explaining every change, and remembers reviewer feedback for next time.
 
 ## Setup
 
@@ -43,11 +42,37 @@ pytest
 Sync the docs with a merged PR (no webhook needed):
 
 ```bash
-driftless run --repo debopamghosh12/docdrift-demo --pr 1            # opens/updates the docs PR
-driftless run --repo debopamghosh12/docdrift-demo --pr 1 --dry-run  # only print the proposed diff
+driftless run --repo debopamghosh12/driftless-demo --pr 1            # opens/updates the docs PR
+driftless run --repo debopamghosh12/driftless-demo --pr 1 --dry-run  # only print the proposed diff
 ```
 
 This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, the LLM's verified rewrites and new sections, and a diff. Without `--dry-run` it then pushes one commit to `driftless/pr-<n>` and opens (or updates) a PR titled `docs: sync docs with #<n> (...)`, printing its URL. If there is nothing to change, it comments on the source PR instead. `GITHUB_TOKEN` needs contents and pull-request write access.
+
+## Executable docs
+
+Driftless doesn't stop at reading the code: it **runs your docs**. Every request example in the docs is executed against the real app, started from the repo at the commit being documented, and an example only counts as correct if it actually works.
+
+- **Examples** are `curl` commands in `bash`/`sh`/`shell`/`console` blocks, or raw requests in `http` blocks (`POST /notes` + headers + JSON body), aimed at `localhost`. Each is paired with its documented result: the first status with a reason phrase that follows it (`200 OK`, `HTTP/1.1 404 Not Found`) and the JSON block after that status. Examples that use shell variables (`$TOKEN`) or other hosts are skipped.
+- **The app** is found with `ast` (a module-level `app = FastAPI(...)`, `src/` layouts included) and started with uvicorn on a free port. Its dependencies go into a venv cached under `.driftless_cache/venvs/`, keyed by a hash of `requirements.txt` and the Python version (built with `uv` when available, else `venv` + pip), so only the first run installs anything. Env vars are set to the defaults documented in the docs' configuration tables.
+- **Order matters, state doesn't leak.** Each doc file gets a fresh app, and its examples run in document order, so the `POST` that creates note 1 is what the later `GET /notes/1` reads.
+- **Comparison.** The status must match. Documented JSON must match the actual JSON in structure: the same keys and the same value types. Ids and timestamps may differ freely. Other value differences (`"Pen"` vs `"Ink"`, 2 items vs 0) are warnings, not failures, since they usually reflect state rather than wrong docs.
+- **Fixing.** For each failing example the LLM gets the example, its documented result, the actual request and response, and the route code. It fixes the request or the documented response, and the file is re-run on a fresh app, up to 2 times. The fix is then tidied deterministically: ids and timestamps from the live run are put back to the documented values, and unchanged JSON keeps its original formatting. Each example ends up as **🧪 passed**, **🔁 fixed after running**, or **❌ still failing**. A failing example's doc change is kept, but flagged clearly in the PR.
+
+In `driftless run` this happens after the static verifier, on every doc file the run changed. The docs PR gets a "🧪 Executed examples: X/Y passing" section with a table (file, example, expected vs actual status, result) and lists every example fixed after running. Pass `--no-execute` (or set `EXECUTE_EXAMPLES=false`) to skip it.
+
+### Docs health audit
+
+`driftless check` runs every example in a repo's docs and needs no PR. You can point it at any repo with a FastAPI app:
+
+```bash
+driftless check --repo debopamghosh12/driftless-demo    # pass/fail report for main
+driftless check --repo owner/name --ref v1.2.0           # any branch, tag or commit
+driftless check --repo owner/name --fix                  # fix broken examples, open a PR
+```
+
+It exits with status 1 if any example is still failing, so it can gate CI. With `--fix`, the repaired files are committed to `driftless/fix-examples` and a PR is opened (or updated on reruns). As with docs PRs, a file that changed on the default branch since `--ref` is never overwritten.
+
+> **Security note.** Executable docs **run the repository's code on your machine**: its `requirements.txt` is installed and its app is started. Only use it on repositories you trust. The app runs as a normal subprocess, not in a container. It is bound to `127.0.0.1` and gets a copy of your environment with credentials stripped (any variable whose name contains `TOKEN`, `SECRET`, `PASSWORD` or `API_KEY`). It is always killed afterwards, process tree included. Running it in a Docker sandbox with no network or host access is future work.
 
 ## Running as a GitHub webhook
 
@@ -111,3 +136,4 @@ How the server behaves:
 - **2026-10-26 — Invented example values are a verifier failure, not just a prompt rule.** The prompt forbids them, but the model still wrote `NOTES_PAGE_SIZE=30`. A new check fails any `NAME=value` for a repo setting whose value is neither the code's default (`os.getenv("X", "20")` defaults are indexed) nor a value already in the original section. The usual retry then fixes it: live, `NOTES_PAGE_SIZE=10` became `=20` on retry.
 - **2026-10-26 — Webhook syncs run as in-process background jobs with an in-memory registry.** `POST /webhook` verifies the HMAC, then hands merged PRs to FastAPI `BackgroundTasks` and returns 202 at once, because a full sync takes minutes on Groq's free tier and GitHub times out deliveries after 10s. `jobs.JobStore` allows one queued/running job per repo+PR (a redelivery gets the existing job instead of a second LLM run), records status/timing/docs PR URL, and keeps the last 20 for `GET /runs`. No queue or worker process: one server and SQLite are enough for a hackathon demo, and syncs are idempotent, so a job lost on restart is fixed by redelivering the webhook. The server and CLI share the same steps (`sync.sync_pull_request` is the headless version); the app is built by a `create_app(settings, sync)` factory so tests inject a fake sync. A missing `WEBHOOK_SECRET` fails closed (every delivery is rejected).
 - **2026-10-26 — Renamed DocDrift → Driftless ("Docs that never drift. Driftless runs your docs to prove they work.").** The new name says what the tool promises (docs that never drift), not the problem it fights, and the tagline leads with what sets it apart: every change is checked against the real code before it ships. The package, CLI command, logger names, default SQLite file (`driftless.db`), docs branch prefix (`driftless/pr-<n>`) and hidden comment marker (`<!-- driftless:source-pr=N -->`) all changed. Docs PR bodies now open with a "🤖 Generated by Driftless" banner, so reviewers see at once that a PR is automated. Two compatibility shims keep repos that already ran the tool safe: `docdrift/` branches are still treated as our own (never analyzed, so no loops on old docs PRs), and "in sync" comments with the old marker are edited on rerun instead of duplicated. The GitHub repo URL and the `docdrift-demo` repo keep their names.
+- **2026-10-26 — Executable docs: run every example against the real app, fix it until it works.** Static checks prove that names and signatures exist. They can't prove that `curl -X POST ... → 201 Created` is what the API really does. So after the verifier, Driftless starts the app from the snapshot and runs each doc file's `curl`/`http` examples in order, on a fresh app per file. Statuses must match exactly and JSON must match in structure (keys and types), because those are what break a reader's code. Value differences are only warnings: the docs' `{"id": 7}` after a fresh start is state, not a bug. A failing example goes to the LLM with the actual request/response, gets fixed and re-run, up to 2 attempts. We chose a subprocess with uvicorn and a venv cached by requirements hash over Docker because it works on Windows + Git Bash with nothing else installed, and after the first install a check takes a few seconds per file. The trade-off is that it executes repo code locally, which is acceptable for trusted repos and is documented; container isolation is future work. Two things a live run showed: the model wrapped its fix in our `<example>` tags, and it pasted the run's own id and timestamp over the docs' example values. Both are now undone deterministically (`tidy_replacement`), in the same spirit as the verifier's minimal-diff restore. On Windows a venv's `python.exe` is a launcher with a child process, so the server is killed with `taskkill /T` (the whole tree); otherwise the real server would outlive the run.

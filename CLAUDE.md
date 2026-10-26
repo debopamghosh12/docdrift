@@ -49,12 +49,18 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/pr_writer.py` — `DocsRepo` protocol + `PRWriter`: one commit on `driftless/pr-<n>` (old `docdrift/` branches are still recognized as ours), open/update the docs PR idempotently, or comment "in sync" on the source PR
 - `driftless/pr_body.py` — markdown for the docs PR body (summary, table, dropped changes, reasoning) and the sync comment
 - `driftless/github_writer.py` — PyGithub implementation of `DocsRepo` (Git Data API commits, refs, PRs, comments)
+- `driftless/examples.py` — runnable examples from markdown (curl in shell blocks, `http` blocks) + documented status/JSON; documented env defaults
+- `driftless/sandbox.py` — find the FastAPI app (ast), cached venv under `.driftless_cache/`, uvicorn on a free port, kill the process tree
+- `driftless/executor.py` — run examples in order against the app; status must match, JSON structure must match (ids/timestamps flexible, value diffs = warnings)
+- `driftless/example_fixer.py` — LLM fix of a failing example from the actual request/response; deterministic tidy of the fix
+- `driftless/executable_docs.py` — per doc file: fresh app, run, fix, re-run (2 attempts) -> 🧪 passed / 🔁 fixed / ❌ failing
+- `driftless/execution.py` / `execution_report.py` — outcome models / rich table
 - `driftless/memory.py` — SQLite memory of decisions & reviewer feedback
 - `driftless/pipeline.py` — orchestrates the end-to-end run
 - `driftless/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish), used by the server
 - `driftless/jobs.py` — in-memory job registry: one active job per repo+PR, last 20 kept, logging
 - `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, merged PRs -> background job, 202), `GET /health`, `GET /runs`
-- `driftless/cli.py` — typer CLI (`driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR; `driftless serve` starts the webhook server on :8000)
+- `driftless/cli.py` — typer CLI (`driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5] [--no-execute]`; without --dry-run opens the docs PR; `driftless check --repo owner/name [--ref main] [--fix]` audits every doc example; `driftless serve` starts the webhook server on :8000)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 

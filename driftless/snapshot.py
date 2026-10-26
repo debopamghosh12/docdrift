@@ -1,7 +1,8 @@
-"""Download a repo snapshot (docs + source files) at a ref as a single tarball."""
+"""Download a repo snapshot (docs, source and runtime files) at a ref as a single tarball."""
 
 import io
 import tarfile
+from pathlib import PurePosixPath
 
 import httpx
 
@@ -9,7 +10,14 @@ from driftless.diff_parser import is_source_path
 from driftless.doc_index import is_doc_path
 
 MAX_FILE_BYTES = 512_000
+RUNTIME_SUFFIXES = frozenset({".toml", ".cfg", ".ini", ".json", ".yaml", ".yml", ".html", ".jinja", ".j2", ".sql", ".csv"})
 API_URL = "https://api.github.com"
+
+
+def is_runtime_path(path: str) -> bool:
+    """Non-source files an app needs to start (requirements, config, data, templates)."""
+    p = PurePosixPath(path)
+    return (p.name.startswith("requirements") and p.suffix == ".txt") or p.suffix.lower() in RUNTIME_SUFFIXES
 
 
 def download_snapshot(repo_name: str, ref: str, token: str | None) -> dict[str, str]:
@@ -35,7 +43,7 @@ def read_tarball(data: bytes) -> dict[str, str]:
             if not member.isfile() or member.size > MAX_FILE_BYTES:
                 continue
             _, _, path = member.name.partition("/")  # drop the "owner-repo-sha/" prefix
-            if not (is_doc_path(path) or is_source_path(path)):
+            if not (is_doc_path(path) or is_source_path(path) or is_runtime_path(path)):
                 continue
             handle = archive.extractfile(member)
             if handle is None:

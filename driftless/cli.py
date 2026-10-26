@@ -11,6 +11,9 @@ from rich.console import Console
 from driftless import __version__
 
 if TYPE_CHECKING:
+    from driftless.config import Settings
+    from driftless.execution import ExecutionReport
+    from driftless.github_client import GitHubClient
     from driftless.llm import JsonLLM
     from driftless.pipeline import AnalysisResult
     from driftless.proposals import DocProposals
@@ -35,8 +38,11 @@ def run(
     min_confidence: float = typer.Option(
         0.5, "--min-confidence", min=0.0, max=1.0, help="Drop LLM proposals below this confidence."
     ),
+    execute: bool = typer.Option(
+        True, "--execute/--no-execute", help="Run the examples in updated docs against the app (runs repo code)."
+    ),
 ) -> None:
-    """Sync docs with a merged PR: find stale sections, rewrite and verify them, open a docs PR."""
+    """Sync docs with a merged PR: find stale sections, rewrite and verify them, run examples, open a docs PR."""
     from driftless.config import get_settings
     from driftless.github_client import GitHubClient
     from driftless.llm import JsonLLM, LLMError
@@ -62,6 +68,9 @@ def run(
         result = analyze_pull_request(client, repo, pr, top_k=top)
     render_analysis(result, console)
     proposals = _propose(result, llm, min_confidence, console)
+    if execute and settings.execute_examples:
+        files = client.fetch_files(repo, result.pr.merge_commit_sha)
+        proposals.execution = _execute_updated(result, proposals, files, llm, min_confidence, settings, console)
     if dry_run:
         return
 
@@ -121,6 +130,127 @@ def _propose(
     originals = {d.path: d.content for d in result.docs}
     render_diffs({p: unified_diff(p, originals[p], new) for p, new in updated.items()}, console)
     return proposals
+
+
+def _execute_updated(
+    result: "AnalysisResult",
+    proposals: "DocProposals",
+    files: dict[str, str],
+    llm: "JsonLLM",
+    min_confidence: float,
+    settings: "Settings",
+    console: Console,
+) -> "ExecutionReport | None":
+    from pathlib import Path
+
+    from driftless.doc_editor import apply_proposals
+    from driftless.example_fixer import ExampleFixer
+    from driftless.executable_docs import execute_updated_docs
+    from driftless.execution_report import render_execution
+
+    with console.status("Running the examples in the updated docs against the app...") as status:
+        report = execute_updated_docs(
+            result.docs,
+            files,
+            proposals,
+            min_confidence,
+            ExampleFixer(llm),
+            Path(settings.sandbox_cache_dir),
+            settings.sandbox_startup_timeout,
+            progress=status.update,
+        )
+    if report is None:
+        console.print("[dim]No updated doc files, so no examples to run.[/]")
+        return None
+    render_execution(report, console, title="Executed examples in updated docs")
+    _render_example_fixes(apply_proposals(result.docs, proposals, min_confidence), report, console)
+    return report
+
+
+def _render_example_fixes(before: dict[str, str], report: "ExecutionReport", console: Console) -> None:
+    from driftless.doc_editor import unified_diff
+    from driftless.proposal_report import render_diffs
+
+    diffs = {p: unified_diff(p, before[p], t) for p, t in report.contents.items() if p in before and t != before[p]}
+    if diffs:
+        console.print("[bold cyan]Example fixes after running:[/]")
+        render_diffs(diffs, console)
+
+
+@app.command()
+def check(
+    repo: str = typer.Option(..., "--repo", help="Repository in owner/name form."),
+    ref: str = typer.Option("main", "--ref", help="Branch, tag or commit to audit."),
+    fix: bool = typer.Option(False, "--fix", help="Fix broken examples with the LLM and open a PR."),
+) -> None:
+    """Docs health audit: run every example in the repo's docs against its app and report pass/fail.
+
+    Runs the repository's code locally; only use it on repositories you trust.
+    """
+    from pathlib import Path
+
+    from driftless.config import get_settings
+    from driftless.executable_docs import execute_docs
+    from driftless.execution_report import render_execution
+    from driftless.github_client import GitHubClient
+
+    _force_utf8_stdout()
+    console = Console()
+    settings = get_settings()
+    if fix and not settings.github_token:
+        console.print("[red]GITHUB_TOKEN is required to open a PR with --fix.[/]")
+        raise typer.Exit(code=1)
+    fixer = None
+    if fix:
+        from driftless.example_fixer import ExampleFixer
+        from driftless.llm import JsonLLM, LLMError
+
+        try:
+            fixer = ExampleFixer(JsonLLM.from_settings(settings))
+        except LLMError as exc:
+            console.print(f"[red]{exc}[/]")
+            raise typer.Exit(code=1) from exc
+
+    client = GitHubClient(settings.github_token or None)
+    with _exit_on_errors(console), console.status(f"Downloading {repo}@{ref}..."):
+        docs = client.fetch_docs(repo, ref)
+        files = client.fetch_files(repo, ref)
+    originals = {d.path: d.content for d in docs}
+    with console.status("Running the examples in the docs against the app...") as status:
+        report = execute_docs(
+            files, originals, fixer, Path(settings.sandbox_cache_dir), settings.sandbox_startup_timeout, status.update
+        )
+    render_execution(report, console, title=f"Docs health audit of {repo}@{ref}")
+    if fix:
+        _render_example_fixes(originals, report, console)
+        _publish_example_fixes(client, settings, repo, ref, originals, report, console)
+    if report.failing or report.errors:
+        raise typer.Exit(code=1)
+
+
+def _publish_example_fixes(
+    client: "GitHubClient",
+    settings: "Settings",
+    repo: str,
+    ref: str,
+    originals: dict[str, str],
+    report: "ExecutionReport",
+    console: Console,
+) -> None:
+    from driftless.github_writer import GitHubWriter
+    from driftless.pr_writer import PRWriter
+
+    if not report.fixed:
+        console.print("[dim]No examples were fixed, so no PR was opened.[/]")
+        return
+    with _exit_on_errors(console), console.status("Publishing..."):
+        published = PRWriter(GitHubWriter(settings.github_token)).publish_example_fixes(repo, ref, originals, report)
+    if published is None:
+        console.print("[yellow]The fixed files changed on the default branch since this ref; no PR opened.[/]")
+        return
+    for path in published.skipped_files:
+        console.print(f"[yellow]Skipped {path}: it changed on the default branch since {ref}.[/]")
+    console.print(f"[green]Examples PR {published.action.value} ({published.branch}):[/] {published.url}")
 
 
 def _force_utf8_stdout() -> None:

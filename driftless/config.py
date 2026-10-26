@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///driftless.db"
 
+    # Executable docs: run documented examples against the app (runs the repo's code locally).
+    execute_examples: bool = True
+    sandbox_cache_dir: str = ".driftless_cache"
+    sandbox_startup_timeout: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

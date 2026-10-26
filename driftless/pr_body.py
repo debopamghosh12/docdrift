@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.proposals import DocProposals, Verification, VerificationStatus
 
@@ -89,6 +90,8 @@ def render_pr_body(
         parts.append(
             f"| `{covered.file}` | {_cell(covered.item.name)} | covered | documented by a section update above | | |"
         )
+    if proposals.execution:
+        parts += ["", *render_execution(proposals.execution)]
     if dropped:
         parts += ["", "### Dropped changes", ""]
         parts += [f"- `{r.file}` › {r.section}: {_dropped_reason(r.verification)}" for r in dropped]
@@ -133,6 +136,85 @@ def render_sync_comment(
     ]
     lines += [f"- `{r.file}` › {r.section}: {_dropped_reason(r.verification)}" for r in rows]
     return "\n".join(lines + ["", "---", FOOTER, ""])
+
+
+EXAMPLE_LABELS = {
+    ExampleStatus.PASSED: "🧪 passed",
+    ExampleStatus.FIXED: "🔁 fixed after running",
+    ExampleStatus.FAILING: "❌ still failing",
+}
+
+
+def render_execution(report: ExecutionReport) -> list[str]:
+    """The "🧪 Executed examples" section: every example run against the real app."""
+    app = f" against `{report.app}`" if report.app else ""
+    parts = [
+        f"### 🧪 Executed examples: {report.passing}/{report.total} passing",
+        "",
+        f"Every request example in the updated files was run{app}, started from this commit "
+        "(a fresh app per file, examples in document order).",
+        "",
+    ]
+    if report.outcomes:
+        parts += [
+            "| File | Example | Expected status | Actual status | Result |",
+            "|------|---------|----------------:|--------------:|--------|",
+        ]
+        parts += [
+            f"| `{o.file}` | `{_cell(o.label)}` (line {o.line}) | {_expected_status(o)} "
+            f"| {_status(o.final_actual_status)} | {EXAMPLE_LABELS[o.status]} |"
+            for o in report.outcomes
+        ]
+    if report.fixed:
+        parts += ["", "**Fixed after running**", ""]
+        parts += [
+            f"- `{o.file}` › `{o.label}`: {_cell('; '.join(o.fixes))} (was: {_cell('; '.join(o.failures))})"
+            for o in report.fixed
+        ]
+    if report.failing:
+        parts += ["", "**❌ Still failing — please review before merging**", ""]
+        parts += [
+            f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}"
+            + (f" ({_cell(o.note)})" if o.note else "")
+            for o in report.failing
+        ]
+    warned = [o for o in report.outcomes if o.warnings]
+    if warned:
+        parts += ["", "<details>", "<summary>Value differences (warnings, not failures)</summary>", ""]
+        parts += [f"- `{o.file}` › `{o.label}`: {_cell('; '.join(o.warnings))}" for o in warned]
+        parts += ["", "</details>"]
+    if report.errors:
+        parts += ["", *[f"- ⚠️ {_cell(error)}" for error in report.errors]]
+    return parts
+
+
+def render_check_body(repo: str, ref: str, report: ExecutionReport, changed_files: list[str]) -> str:
+    """Body of the PR opened by `driftless check --fix`."""
+    files = ", ".join(f"`{p}`" for p in changed_files)
+    parts = [
+        BANNER,
+        "",
+        f"Docs health audit of `{repo}` at `{ref}`: Driftless ran every request example in the docs "
+        f"against the real app and fixed the ones that didn't work, in {files}.",
+        "",
+        *render_execution(report),
+        "",
+        "---",
+        FOOTER,
+        "",
+    ]
+    return "\n".join(parts)
+
+
+def _expected_status(outcome: ExampleOutcome) -> str:
+    final = _status(outcome.final_expected_status)
+    if outcome.expected_status != outcome.final_expected_status:
+        return f"~~{_status(outcome.expected_status)}~~ {final}"
+    return final
+
+
+def _status(code: int | None) -> str:
+    return str(code) if code is not None else "—"
 
 
 def status_label(verification: Verification) -> str:
