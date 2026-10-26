@@ -1,5 +1,5 @@
-from docdrift.doc_index import PREAMBLE, index_document, is_doc_path
-from docdrift.models import DocFile
+from driftless.doc_index import PREAMBLE, index_document, is_doc_path
+from driftless.models import DocFile
 
 README = """\
 Intro text before any heading.

@@ -1,7 +1,7 @@
-from docdrift.code_index import build_code_index
-from docdrift.doc_index import index_documents
-from docdrift.models import ChangeKind, ChangeSet, DocFile, EnvVarChange, MissingDoc, SourceFile
-from docdrift.placement import covering_files
+from driftless.code_index import build_code_index
+from driftless.doc_index import index_documents
+from driftless.models import ChangeKind, ChangeSet, DocFile, EnvVarChange, MissingDoc, SourceFile
+from driftless.placement import covering_files
 
 CODE = build_code_index(
     [

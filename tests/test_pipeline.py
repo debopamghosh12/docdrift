@@ -2,9 +2,9 @@ from io import StringIO
 
 from rich.console import Console
 
-from docdrift.models import ChangedFile, DocFile, PullRequestInfo, SourceFile
-from docdrift.pipeline import analyze_pull_request
-from docdrift.report import render_analysis
+from driftless.models import ChangedFile, DocFile, PullRequestInfo, SourceFile
+from driftless.pipeline import analyze_pull_request
+from driftless.report import render_analysis
 
 
 class FakeProvider:
@@ -49,14 +49,14 @@ def test_pipeline_end_to_end() -> None:
     assert "README.md:3-5" in text
 
 
-def test_pipeline_refuses_docdrift_branches() -> None:
+def test_pipeline_refuses_driftless_branches() -> None:
     import pytest
 
-    from docdrift.pipeline import OwnPullRequestError
+    from driftless.pipeline import OwnPullRequestError
 
     class OwnPR(FakeProvider):
         def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
-            return super().fetch_pull_request(repo_name, number).model_copy(update={"head_ref": "docdrift/pr-7"})
+            return super().fetch_pull_request(repo_name, number).model_copy(update={"head_ref": "driftless/pr-7"})
 
         def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]:
             raise AssertionError("must stop before fetching docs")

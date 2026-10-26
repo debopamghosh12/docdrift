@@ -1,5 +1,7 @@
-# DocDrift
+# Driftless
 
+> **Docs that never drift. Driftless runs your docs to prove they work.**
+>
 > An always-on agent that keeps your documentation in sync with your code.
 
 ## Problem
@@ -10,11 +12,11 @@ Docs rot silently. Every merged PR can rename a flag, change a default, or remov
 
 _Placeholder — to be filled in as the pipeline lands._
 
-1. A PR is merged on a watched repo → GitHub webhook hits DocDrift.
-2. DocDrift reads the diff and indexes `README.md` and `docs/**/*.md` into sections.
+1. A PR is merged on a watched repo → GitHub webhook hits Driftless.
+2. Driftless reads the diff and indexes `README.md` and `docs/**/*.md` into sections.
 3. An LLM identifies sections the change made stale and rewrites only those.
 4. A verifier checks each rewrite against the actual code.
-5. DocDrift opens a follow-up PR explaining every change, and remembers reviewer feedback for next time.
+5. Driftless opens a follow-up PR explaining every change, and remembers reviewer feedback for next time.
 
 ## Setup
 
@@ -32,7 +34,7 @@ pip install -e ".[dev]"
 cp .env.example .env   # then fill in GITHUB_TOKEN, WEBHOOK_SECRET, LLM_API_KEY
 
 # check
-python -m docdrift.cli --help
+python -m driftless.cli --help
 pytest
 ```
 
@@ -41,21 +43,21 @@ pytest
 Sync the docs with a merged PR (no webhook needed):
 
 ```bash
-docdrift run --repo debopamghosh12/docdrift-demo --pr 1            # opens/updates the docs PR
-docdrift run --repo debopamghosh12/docdrift-demo --pr 1 --dry-run  # only print the proposed diff
+driftless run --repo debopamghosh12/docdrift-demo --pr 1            # opens/updates the docs PR
+driftless run --repo debopamghosh12/docdrift-demo --pr 1 --dry-run  # only print the proposed diff
 ```
 
-This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, the LLM's verified rewrites and new sections, and a diff. Without `--dry-run` it then pushes one commit to `docdrift/pr-<n>` and opens (or updates) a PR titled `docs: sync docs with #<n> (...)`, printing its URL. If there is nothing to change, it comments on the source PR instead. `GITHUB_TOKEN` needs contents and pull-request write access.
+This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, the LLM's verified rewrites and new sections, and a diff. Without `--dry-run` it then pushes one commit to `driftless/pr-<n>` and opens (or updates) a PR titled `docs: sync docs with #<n> (...)`, printing its URL. If there is nothing to change, it comments on the source PR instead. `GITHUB_TOKEN` needs contents and pull-request write access.
 
 ## Running as a GitHub webhook
 
-DocDrift can run always-on: every merged PR on a watched repo triggers the same sync as `docdrift run` (analyze, rewrite, verify, open/update the docs PR). For local development, [smee.io](https://smee.io) forwards GitHub's webhook deliveries to your machine (Windows + Git Bash with Node installed).
+Driftless can run always-on: every merged PR on a watched repo triggers the same sync as `driftless run` (analyze, rewrite, verify, open/update the docs PR). For local development, [smee.io](https://smee.io) forwards GitHub's webhook deliveries to your machine (Windows + Git Bash with Node installed).
 
 1. **Set a webhook secret.** Put a random string in `.env` as `WEBHOOK_SECRET` (e.g. from `python -c "import secrets; print(secrets.token_hex(32))"`). `GITHUB_TOKEN` and `LLM_API_KEY` must be set too. Without a secret the server rejects every delivery.
 2. **Start the server** (terminal 1):
    ```bash
    source .venv/Scripts/activate
-   docdrift serve            # http://127.0.0.1:8000
+   driftless serve            # http://127.0.0.1:8000
    ```
 3. **Create a smee channel.** Open <https://smee.io> and click **Start a new channel**; copy its URL (`https://smee.io/<id>`).
 4. **Forward the channel to the server** (terminal 2):
@@ -77,7 +79,7 @@ DocDrift can run always-on: every merged PR on a watched repo triggers the same 
 How the server behaves:
 
 - `POST /webhook` verifies `X-Hub-Signature-256` (HMAC-SHA256 of the raw body with `WEBHOOK_SECRET`) and returns **401** if it doesn't match.
-- `ping` returns `ok`. `pull_request` with `action=closed` and `merged=true` queues a background sync and returns **202** immediately. Unmerged PRs, PRs from `docdrift/` branches (DocDrift's own) and other events (issue comments are reserved for reviewer feedback) are acknowledged with `ignored`.
+- `ping` returns `ok`. `pull_request` with `action=closed` and `merged=true` queues a background sync and returns **202** immediately. Unmerged PRs, PRs from `driftless/` branches (Driftless's own, plus `docdrift/` branches from before the rename) and other events (issue comments are reserved for reviewer feedback) are acknowledged with `ignored`.
 - A source PR is never synced twice at the same time: a redelivery while its job is queued or running returns `already running` with the existing job.
 - Each job's start, finish, docs PR URL or error is logged; `GET /runs` keeps the last 20 jobs in memory (lost on restart).
 
@@ -104,7 +106,8 @@ How the server behaves:
 - **2026-10-26 — Repo snapshot via one tarball request.** The verifier needs every source file at the merge commit, not just the changed ones. Downloading the tarball (read in memory, never extracted to disk) replaces ~150 per-file blob calls and supersedes the parallel blob fetching above.
 - **2026-10-26 — One LLM call per doc file (batched sections), relevant hunks only.** Candidate sections from the same file share one prompt (up to 6 sections / 6k chars) with only the hunks matching their terms. On the demo PR this is 2 review calls instead of 9, and a full verified dry run takes ~2m15s on Groq's free tier instead of ~4m15s.
 - **2026-10-26 — Missing items are documented in every file that covers their kind.** Routes/functions: any file mentioning ≥2 siblings (other routes; other names from the same source file). Env vars/flags: a single section must list ≥2 siblings, since they live in tables — otherwise `docs/api.md`'s passing mention of `APP_PORT` would get an env-var section. Siblings removed by the PR count, and if no file qualifies we prefer the file whose rewrite already mentions the item.
-- **2026-10-26 — Docs PRs are one commit on the default branch, rebuilt on every run.** `pr_writer` creates the tree and commit with the Git Data API (one commit regardless of file count), then creates or force-moves `docdrift/pr-<n>`. An open PR from that branch has its title and body edited, so reruns are idempotent and the PR always reflects the latest verified proposals. A file is only written if its content on the default branch still equals the merge-commit version DocDrift edited. Otherwise it is skipped and listed, so someone else's later edit is never silently reverted. With nothing to commit, DocDrift posts a comment on the source PR and edits that same comment on reruns (found by a hidden `<!-- docdrift:source-pr=N -->` marker). PRs from `docdrift/` branches are refused before any analysis, so DocDrift never loops on its own PRs.
+- **2026-10-26 — Docs PRs are one commit on the default branch, rebuilt on every run.** `pr_writer` creates the tree and commit with the Git Data API (one commit regardless of file count), then creates or force-moves `driftless/pr-<n>`. An open PR from that branch has its title and body edited, so reruns are idempotent and the PR always reflects the latest verified proposals. A file is only written if its content on the default branch still equals the merge-commit version Driftless edited. Otherwise it is skipped and listed, so someone else's later edit is never silently reverted. With nothing to commit, Driftless posts a comment on the source PR and edits that same comment on reruns (found by a hidden `<!-- driftless:source-pr=N -->` marker). PRs from `driftless/` branches are refused before any analysis, so Driftless never loops on its own PRs.
 - **2026-10-26 — Section separators are structure, not content.** Trailing blank lines and `---` breaks are kept from the original section and stripped from the model's text. New sections go after the anchor's real content: before trailing "See ..." lines, blank lines and breaks. They copy the file's `---` style. Why: in a real run the model dropped one `---` and doubled another.
 - **2026-10-26 — Invented example values are a verifier failure, not just a prompt rule.** The prompt forbids them, but the model still wrote `NOTES_PAGE_SIZE=30`. A new check fails any `NAME=value` for a repo setting whose value is neither the code's default (`os.getenv("X", "20")` defaults are indexed) nor a value already in the original section. The usual retry then fixes it: live, `NOTES_PAGE_SIZE=10` became `=20` on retry.
 - **2026-10-26 — Webhook syncs run as in-process background jobs with an in-memory registry.** `POST /webhook` verifies the HMAC, then hands merged PRs to FastAPI `BackgroundTasks` and returns 202 at once, because a full sync takes minutes on Groq's free tier and GitHub times out deliveries after 10s. `jobs.JobStore` allows one queued/running job per repo+PR (a redelivery gets the existing job instead of a second LLM run), records status/timing/docs PR URL, and keeps the last 20 for `GET /runs`. No queue or worker process: one server and SQLite are enough for a hackathon demo, and syncs are idempotent, so a job lost on restart is fixed by redelivering the webhook. The server and CLI share the same steps (`sync.sync_pull_request` is the headless version); the app is built by a `create_app(settings, sync)` factory so tests inject a fake sync. A missing `WEBHOOK_SECRET` fails closed (every delivery is rejected).
+- **2026-10-26 — Renamed DocDrift → Driftless ("Docs that never drift. Driftless runs your docs to prove they work.").** The new name says what the tool promises (docs that never drift), not the problem it fights, and the tagline leads with what sets it apart: every change is checked against the real code before it ships. The package, CLI command, logger names, default SQLite file (`driftless.db`), docs branch prefix (`driftless/pr-<n>`) and hidden comment marker (`<!-- driftless:source-pr=N -->`) all changed. Docs PR bodies now open with a "🤖 Generated by Driftless" banner, so reviewers see at once that a PR is automated. Two compatibility shims keep repos that already ran the tool safe: `docdrift/` branches are still treated as our own (never analyzed, so no loops on old docs PRs), and "in sync" comments with the old marker are edited on rerun instead of duplicated. The GitHub repo URL and the `docdrift-demo` repo keep their names.

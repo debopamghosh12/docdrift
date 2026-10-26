@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from docdrift.diff_parser import build_changeset, parse_unified_diff
-from docdrift.diff_parser.patch import reconstruct
-from docdrift.models import ChangedFile, ChangeKind, ChangeSet, FileStatus, SymbolKind
+from driftless.diff_parser import build_changeset, parse_unified_diff
+from driftless.diff_parser.patch import reconstruct
+from driftless.models import ChangedFile, ChangeKind, ChangeSet, FileStatus, SymbolKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

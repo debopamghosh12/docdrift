@@ -1,6 +1,6 @@
-from docdrift.candidates import find_missing_docs, select_candidates
-from docdrift.doc_index import index_document
-from docdrift.models import (
+from driftless.candidates import find_missing_docs, select_candidates
+from driftless.doc_index import index_document
+from driftless.models import (
     ChangeKind,
     ChangeSet,
     CliFlagChange,

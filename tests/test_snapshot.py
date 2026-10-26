@@ -1,7 +1,7 @@
 import io
 import tarfile
 
-from docdrift.snapshot import read_tarball
+from driftless.snapshot import read_tarball
 
 
 def make_tarball(files: dict[str, bytes]) -> bytes:

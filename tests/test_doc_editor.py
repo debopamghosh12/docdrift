@@ -1,7 +1,7 @@
-from docdrift.doc_editor import apply_proposals, insert_section, unified_diff
-from docdrift.doc_index import index_document
-from docdrift.models import DocFile, MissingDoc
-from docdrift.proposals import (
+from driftless.doc_editor import apply_proposals, insert_section, unified_diff
+from driftless.doc_index import index_document
+from driftless.models import DocFile, MissingDoc
+from driftless.proposals import (
     DocProposals,
     Insertion,
     NewSectionProposal,

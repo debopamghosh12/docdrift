@@ -1,9 +1,11 @@
-# CLAUDE.md — DocDrift
+# CLAUDE.md — Driftless
+
+> Docs that never drift. Driftless runs your docs to prove they work.
 
 ## Context
 24-hour hackathon, judged on **build quality, complexity, and functionality**. Optimize for a working, demoable end-to-end flow with clean code.
 
-## What DocDrift is
+## What Driftless is
 An always-on agent that keeps documentation in sync with code. When a PR is merged on a watched GitHub repo, it:
 1. Reads the merged diff.
 2. Finds doc sections (`README.md`, `docs/**/*.md`) that are now stale.
@@ -21,38 +23,38 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - Secrets/config from env: `GITHUB_TOKEN`, `WEBHOOK_SECRET`, `LLM_*`. Loaded from `.env` (gitignored); `.env.example` is committed.
 
 ## Layout
-- `docdrift/config.py` — settings (pydantic-settings, reads `.env`)
-- `docdrift/models.py` — shared pydantic models (ChangedFile, PullRequestInfo, ChangeSet, DocSection, Candidate, ...)
-- `docdrift/github_client.py` — GitHub API wrapper (PyGithub); before = merge base, after = PR head, docs at merge commit
-- `docdrift/diff_parser/` — package: `patch.py` (unified diff parsing), `python_symbols.py` (ast), `regex_symbols.py` (JS/TS + Python fallback), `patterns.py` (env vars, routes, CLI flags), `symbols.py` (before/after comparison); `build_changeset()` in `__init__`
-- `docdrift/doc_index.py` — split markdown docs into heading-delimited sections
-- `docdrift/candidates.py` — score sections against the ChangeSet; flag missing docs
-- `docdrift/report.py` — rich terminal tables
-- `docdrift/analyzer.py` — orchestrates: batched reviews -> verify -> one retry with failures -> verified/fixed-on-retry/dropped; missing docs per covering file
-- `docdrift/reviewer.py` — LLM calls: batched section review (per file), verification retry, new-section drafts
-- `docdrift/proposals.py` — pydantic models for LLM replies, verification status, proposals
-- `docdrift/placement.py` — which doc files cover a missing item's kind
-- `docdrift/verifier.py` — deterministic checks vs. code at merge commit (signatures, symbols, routes, example values, python blocks, minimal diff)
-- `docdrift/code_index.py` — facts from all source files (functions+effective defaults, classes, names, constants, env vars, flags, routes)
-- `docdrift/doc_mentions.py` — claims extracted from markdown (signatures, calls, classes, constants, flags, routes, code blocks)
-- `docdrift/minimal_diff.py` — restore whitespace/table-padding/look-alike churn; unrelated-change ratio
-- `docdrift/snapshot.py` — repo tarball at a ref (docs + sources) in one request
-- `docdrift/normalize.py` — heading normalization
-- `docdrift/llm.py` — JSON-mode OpenAI-compatible client; pydantic validation; one retry with the error appended
-- `docdrift/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
-- `docdrift/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section
-- `docdrift/prompts.py` — loads `prompts/*.txt` (`string.Template`, `$placeholders`)
-- `docdrift/doc_editor.py` — apply rewrites (line ranges) then insertions (after real content, matching `---` separators); unified diffs
-- `docdrift/proposal_report.py` — rich tables for verdicts/insertions; colored diffs
-- `docdrift/pr_writer.py` — `DocsRepo` protocol + `PRWriter`: one commit on `docdrift/pr-<n>`, open/update the docs PR idempotently, or comment "in sync" on the source PR
-- `docdrift/pr_body.py` — markdown for the docs PR body (summary, table, dropped changes, reasoning) and the sync comment
-- `docdrift/github_writer.py` — PyGithub implementation of `DocsRepo` (Git Data API commits, refs, PRs, comments)
-- `docdrift/memory.py` — SQLite memory of decisions & reviewer feedback
-- `docdrift/pipeline.py` — orchestrates the end-to-end run
-- `docdrift/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish), used by the server
-- `docdrift/jobs.py` — in-memory job registry: one active job per repo+PR, last 20 kept, logging
-- `docdrift/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, merged PRs -> background job, 202), `GET /health`, `GET /runs`
-- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR; `docdrift serve` starts the webhook server on :8000)
+- `driftless/config.py` — settings (pydantic-settings, reads `.env`)
+- `driftless/models.py` — shared pydantic models (ChangedFile, PullRequestInfo, ChangeSet, DocSection, Candidate, ...)
+- `driftless/github_client.py` — GitHub API wrapper (PyGithub); before = merge base, after = PR head, docs at merge commit
+- `driftless/diff_parser/` — package: `patch.py` (unified diff parsing), `python_symbols.py` (ast), `regex_symbols.py` (JS/TS + Python fallback), `patterns.py` (env vars, routes, CLI flags), `symbols.py` (before/after comparison); `build_changeset()` in `__init__`
+- `driftless/doc_index.py` — split markdown docs into heading-delimited sections
+- `driftless/candidates.py` — score sections against the ChangeSet; flag missing docs
+- `driftless/report.py` — rich terminal tables
+- `driftless/analyzer.py` — orchestrates: batched reviews -> verify -> one retry with failures -> verified/fixed-on-retry/dropped; missing docs per covering file
+- `driftless/reviewer.py` — LLM calls: batched section review (per file), verification retry, new-section drafts
+- `driftless/proposals.py` — pydantic models for LLM replies, verification status, proposals
+- `driftless/placement.py` — which doc files cover a missing item's kind
+- `driftless/verifier.py` — deterministic checks vs. code at merge commit (signatures, symbols, routes, example values, python blocks, minimal diff)
+- `driftless/code_index.py` — facts from all source files (functions+effective defaults, classes, names, constants, env vars, flags, routes)
+- `driftless/doc_mentions.py` — claims extracted from markdown (signatures, calls, classes, constants, flags, routes, code blocks)
+- `driftless/minimal_diff.py` — restore whitespace/table-padding/look-alike churn; unrelated-change ratio
+- `driftless/snapshot.py` — repo tarball at a ref (docs + sources) in one request
+- `driftless/normalize.py` — heading normalization
+- `driftless/llm.py` — JSON-mode OpenAI-compatible client; pydantic validation; one retry with the error appended
+- `driftless/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
+- `driftless/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section
+- `driftless/prompts.py` — loads `prompts/*.txt` (`string.Template`, `$placeholders`)
+- `driftless/doc_editor.py` — apply rewrites (line ranges) then insertions (after real content, matching `---` separators); unified diffs
+- `driftless/proposal_report.py` — rich tables for verdicts/insertions; colored diffs
+- `driftless/pr_writer.py` — `DocsRepo` protocol + `PRWriter`: one commit on `driftless/pr-<n>` (old `docdrift/` branches are still recognized as ours), open/update the docs PR idempotently, or comment "in sync" on the source PR
+- `driftless/pr_body.py` — markdown for the docs PR body (summary, table, dropped changes, reasoning) and the sync comment
+- `driftless/github_writer.py` — PyGithub implementation of `DocsRepo` (Git Data API commits, refs, PRs, comments)
+- `driftless/memory.py` — SQLite memory of decisions & reviewer feedback
+- `driftless/pipeline.py` — orchestrates the end-to-end run
+- `driftless/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish), used by the server
+- `driftless/jobs.py` — in-memory job registry: one active job per repo+PR, last 20 kept, logging
+- `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, merged PRs -> background job, 202), `GET /health`, `GET /runs`
+- `driftless/cli.py` — typer CLI (`driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR; `driftless serve` starts the webhook server on :8000)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 

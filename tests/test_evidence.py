@@ -1,7 +1,7 @@
-from docdrift.diff_parser import build_changeset
-from docdrift.doc_index import index_document
-from docdrift.evidence import best_example, describe_changeset, file_anchors, relevant_hunks
-from docdrift.models import ChangedFile, DocFile
+from driftless.diff_parser import build_changeset
+from driftless.doc_index import index_document
+from driftless.evidence import best_example, describe_changeset, file_anchors, relevant_hunks
+from driftless.models import ChangedFile, DocFile
 
 DOC = DocFile(
     path="README.md",

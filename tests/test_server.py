@@ -6,10 +6,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from docdrift.config import Settings
-from docdrift.pipeline import OwnPullRequestError
-from docdrift.pr_writer import PublishAction, PublishResult
-from docdrift.server import create_app
+from driftless.config import Settings
+from driftless.pipeline import OwnPullRequestError
+from driftless.pr_writer import PublishAction, PublishResult
+from driftless.server import create_app
 
 SECRET = "s3cret"
 DOCS_PR_URL = "https://github.com/me/app/pull/8"
@@ -24,7 +24,7 @@ class FakeSync:
         self.calls.append((repo, number))
         if self.error:
             raise self.error
-        return PublishResult(action=PublishAction.OPENED, url=DOCS_PR_URL, branch=f"docdrift/pr-{number}")
+        return PublishResult(action=PublishAction.OPENED, url=DOCS_PR_URL, branch=f"driftless/pr-{number}")
 
 
 def make_client(sync: FakeSync, secret: str = SECRET) -> TestClient:
@@ -89,10 +89,11 @@ def test_non_merged_pr_is_ignored() -> None:
     assert client.get("/runs").json() == []
 
 
-def test_docdrift_branch_is_ignored() -> None:
+def test_driftless_branch_is_ignored() -> None:
     sync = FakeSync()
-    response = post(make_client(sync), "pull_request", pr_event(head_ref="docdrift/pr-3"))
-    assert response.json()["status"] == "ignored"
+    client = make_client(sync)
+    for head_ref in ("driftless/pr-3", "docdrift/pr-3"):  # docdrift/ = branches from before the rename
+        assert post(client, "pull_request", pr_event(head_ref=head_ref)).json()["status"] == "ignored"
     assert sync.calls == []
 
 

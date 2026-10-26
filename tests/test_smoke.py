@@ -1,13 +1,13 @@
 from typer.testing import CliRunner
 
-from docdrift.cli import app
-from docdrift.config import Settings
+from driftless.cli import app
+from driftless.config import Settings
 
 
 def test_cli_help() -> None:
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "DocDrift" in result.output
+    assert "Driftless" in result.output
 
 
 def test_settings_defaults() -> None:

@@ -1,7 +1,7 @@
-from docdrift.code_index import build_code_index
-from docdrift.minimal_diff import restore_formatting, unrelated_change_flag
-from docdrift.models import SourceFile
-from docdrift.verifier import (
+from driftless.code_index import build_code_index
+from driftless.minimal_diff import restore_formatting, unrelated_change_flag
+from driftless.models import SourceFile
+from driftless.verifier import (
     Verifier,
     check_code_blocks,
     check_example_values,

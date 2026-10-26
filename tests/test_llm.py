@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from docdrift.proposals import SectionVerdict
-from docdrift.llm import JsonLLM, LLMError
-from docdrift.prompts import render_prompt
-from docdrift.rate_limit import TokenRateLimiter
+from driftless.proposals import SectionVerdict
+from driftless.llm import JsonLLM, LLMError
+from driftless.prompts import render_prompt
+from driftless.rate_limit import TokenRateLimiter
 
 
 class FakeCompletions:

@@ -1,16 +1,16 @@
 import json
 
-from docdrift.analyzer import Analyzer
-from docdrift.models import ChangedFile, DocFile, PullRequestInfo, SourceFile
-from docdrift.pipeline import analyze
-from docdrift.proposals import (
+from driftless.analyzer import Analyzer
+from driftless.models import ChangedFile, DocFile, PullRequestInfo, SourceFile
+from driftless.pipeline import analyze
+from driftless.proposals import (
     BatchSectionVerdict,
     BatchVerdicts,
     NewSectionProposal,
     SectionVerdict,
     VerificationStatus,
 )
-from docdrift.reviewer import batch_candidates
+from driftless.reviewer import batch_candidates
 
 README = """\
 # Notes

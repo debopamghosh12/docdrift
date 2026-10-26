@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "docdrift"
+name = "driftless"
 version = "0.1.0"
-description = "An always-on agent that keeps documentation in sync with code."
+description = "Docs that never drift. Driftless runs your docs to prove they work."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -27,10 +27,10 @@ dev = [
 ]
 
 [project.scripts]
-docdrift = "docdrift.cli:app"
+driftless = "driftless.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["docdrift*"]
+include = ["driftless*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
