@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from driftless.doc_editor import unified_diff
+from driftless.example_impact import ExampleImpact, broken_phrase, consequence_sentence, example_impact
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.pr_body import (
@@ -13,6 +14,7 @@ from driftless.pr_body import (
     _first_sentence,
     _plural,
     change_rows,
+    checked_sentence,
     render_execution,
     status_label,
 )
@@ -30,15 +32,16 @@ def premerge_marker(number: int) -> str:
 
 @dataclass(frozen=True)
 class CheckSummary:
-    stale: int  # sections this PR makes stale: rewrites, new sections, examples fixed after running
-    failing: int  # examples this PR breaks that still fail
+    stale: int  # doc sections this PR makes stale: rewrites and new sections
+    broken: int  # distinct examples this PR breaks (root causes, fixed after running or not)
     errors: int  # reviews that could not finish (LLM errors)
     pre_existing: int = 0  # already wrong at the base commit: shown, never counted against the PR
+    broken_labels: tuple[str, ...] = ()
 
     @property
     def state(self) -> str:
         """Commit status state."""
-        if self.stale or self.failing:
+        if self.stale or self.broken:
             return "failure"
         return "error" if self.errors else "success"
 
@@ -52,10 +55,11 @@ class CheckSummary:
             return f"Could not finish checking the docs ({_plural(self.errors, 'error')})"
         parts = []
         if self.stale:
-            parts.append(f"{_plural(self.stale, 'stale doc section')}")
-        if self.failing:
-            parts.append(f"{_plural(self.failing, 'failing example')}")
-        return ", ".join(parts)
+            parts.append(_plural(self.stale, "stale doc section"))
+        if self.broken:
+            parts.append(f"{_plural(self.broken, 'broken example')} ({', '.join(self.broken_labels)})")
+        text = ", ".join(parts)
+        return text if len(text) <= 140 else text[:139] + "…"
 
 
 @dataclass(frozen=True)
@@ -63,20 +67,33 @@ class Drift:
     """Stale sections and broken examples, split into the PR's own and pre-existing ones."""
 
     rows: list[ChangeRow]
-    fixed: list[ExampleOutcome]
-    failing: list[ExampleOutcome]
+    examples: ExampleImpact
+
+    @property
+    def fixed(self) -> list[ExampleOutcome]:
+        return [o for o in self.examples.roots if o.status == ExampleStatus.FIXED]
+
+    @property
+    def failing(self) -> list[ExampleOutcome]:
+        return [o for o in self.examples.roots if o.status == ExampleStatus.FAILING]
+
+    @property
+    def count(self) -> int:
+        return len(self.rows) + len(self.examples.roots)
+
+    def __bool__(self) -> bool:
+        return bool(self.rows or self.examples)
 
 
 def split_drift(proposals: DocProposals, min_confidence: float) -> tuple[Drift, Drift]:
     """(introduced by this PR, already there at the base commit)."""
     rows = change_rows(proposals, min_confidence)
-    execution = proposals.execution or ExecutionReport()
+    outcomes = (proposals.execution or ExecutionReport()).outcomes
 
     def part(pre_existing: bool) -> Drift:
         return Drift(
             rows=[r for r in rows if r.pre_existing == pre_existing],
-            fixed=[o for o in execution.fixed if o.pre_existing == pre_existing],
-            failing=[o for o in execution.failing if o.pre_existing == pre_existing],
+            examples=example_impact([o for o in outcomes if o.pre_existing == pre_existing]),
         )
 
     return part(False), part(True)
@@ -85,10 +102,11 @@ def split_drift(proposals: DocProposals, min_confidence: float) -> tuple[Drift, 
 def summarize(proposals: DocProposals, min_confidence: float) -> CheckSummary:
     introduced, pre_existing = split_drift(proposals, min_confidence)
     return CheckSummary(
-        stale=len(introduced.rows) + len(introduced.fixed),
-        failing=len(introduced.failing),
+        stale=len(introduced.rows),
+        broken=len(introduced.examples.labels),
         errors=len(proposals.errors),
-        pre_existing=len(pre_existing.rows) + len(pre_existing.fixed) + len(pre_existing.failing),
+        pre_existing=pre_existing.count,
+        broken_labels=tuple(introduced.examples.labels),
     )
 
 
@@ -110,23 +128,20 @@ def render_premerge_comment(
         parts += [
             "## ✅ Docs are in sync with this PR",
             "",
-            f"Driftless checked {_plural(len(result.candidates), 'related section')} across "
-            f"{_plural(len(result.docs), 'doc file')} at `{sha}`: nothing this PR changes is stale and no new "
-            f"interface is undocumented.{ran}",
+            f"Driftless {_lower_first(checked_sentence(result, execution))} at `{sha}`: nothing this PR changes "
+            f"is stale and no new interface is undocumented.{ran}",
         ]
-    elif check.stale:
-        parts += [
-            f"## ⚠️ This PR will make {_plural(check.stale, 'doc section')} stale",
-            "",
-            f"Driftless compared the docs with the code at `{sha}`. Fix them before merging:",
-        ]
-    elif check.failing:
-        parts += [f"## ❌ {_examples(check.failing, 'fail', every=False)} against this PR", ""]
+    elif check.stale or check.broken:
+        parts += [f"## ⚠️ {_headline(check, introduced.examples)}", ""]
+        consequence = consequence_sentence(introduced.examples)
+        if consequence:
+            parts += [consequence + (" They are listed under the executed examples below." if introduced.examples.dependent else ""), ""]
+        parts.append(f"Driftless compared the docs with the code at `{sha}`. Fix them before merging:")
     else:
         parts += ["## ⚠️ Driftless could not finish checking the docs", ""]
 
     parts += _drift_table(introduced)
-    if pre_existing.rows or pre_existing.fixed or pre_existing.failing:
+    if pre_existing:
         parts += [
             "",
             "<details>",
@@ -164,7 +179,24 @@ def render_apply_declined(user: str, reason: str) -> str:
     return f"⚠️ @{user} Driftless did not apply the doc fixes: {reason}\n\n---\n{FOOTER}\n"
 
 
+def _headline(check: CheckSummary, examples: ExampleImpact) -> str:
+    """'This PR breaks 1 documented example (`POST /notes`) in 2 files', and/or stale sections."""
+    sections = _plural(check.stale, "doc section")
+    if not check.broken:
+        return f"This PR will make {sections} stale"
+    broken = broken_phrase(examples)
+    if not check.stale:
+        return f"This PR breaks {broken}"
+    return f"This PR makes {sections} stale and breaks {broken}"
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
 def _drift_table(drift: Drift) -> list[str]:
+    """The PR's own problems: stale sections and root-cause examples (knock-ons are listed with
+    the executed examples)."""
     if not (drift.rows or drift.fixed or drift.failing):
         return []
     lines = ["", "| File | Section | Why | Proposed fix |", "|------|---------|-----|--------------|"]

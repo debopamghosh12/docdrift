@@ -188,6 +188,8 @@ def test_in_sync_comments_on_source_pr_and_edits_on_rerun() -> None:
     assert published.url.endswith("#issuecomment-1")
     (comment,) = gh.comments.values()
     assert "the docs are already in sync" in comment.body and "<!-- driftless:source-pr=7 -->" in comment.body
+    r = result()
+    assert f"Checked {len(r.sections)} doc sections across {len(r.docs)} doc files; nothing is stale" in comment.body
     assert not gh.pulls and set(gh.branches) == {"main"}
 
     writer.publish(result(), DocProposals(), 0.5)

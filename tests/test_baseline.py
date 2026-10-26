@@ -38,7 +38,7 @@ def test_examples_already_failing_at_base_are_pre_existing() -> None:
     assert [o.pre_existing for o in head.outcomes] == [True, True, False, False]
 
     check = summarize(proposals, 0.5)
-    assert (check.stale, check.failing, check.pre_existing) == (0, 2, 2)
+    assert (check.stale, check.broken, check.pre_existing) == (0, 2, 2)
 
 
 def test_only_pre_existing_drift_keeps_the_status_green() -> None:

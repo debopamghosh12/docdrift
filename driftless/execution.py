@@ -24,6 +24,8 @@ class ExampleStatus(str, Enum):
     PASSED = "passed"
     FIXED = "fixed"  # failed, then passed after an LLM fix and a re-run
     FAILING = "failing"
+    # Failed only because an earlier example in the same file failed; passed once that was fixed.
+    DEPENDENT = "dependent"
 
 
 class ExampleOutcome(BaseModel):
@@ -40,6 +42,13 @@ class ExampleOutcome(BaseModel):
     fixes: list[str] = Field(default_factory=list)  # reason of every applied fix
     note: str | None = None  # why a failing example wasn't fixed
     pre_existing: bool = False  # pre-merge: already failed at the PR's base commit
+    caused_by: str | None = None  # dependent: the earlier example whose fix made it pass, "POST /notes (line 12)"
+    blocked_by: str | None = None  # failing, not fixed: an earlier example still fails and may be the cause
+
+    @property
+    def root_cause(self) -> bool:
+        """Broken in its own right: fixed, or still failing with no earlier failure to blame."""
+        return self.status == ExampleStatus.FIXED or (self.status == ExampleStatus.FAILING and not self.blocked_by)
 
 
 class ExecutionReport(BaseModel):
@@ -63,3 +72,11 @@ class ExecutionReport(BaseModel):
     @property
     def failing(self) -> list[ExampleOutcome]:
         return [o for o in self.outcomes if o.status == ExampleStatus.FAILING]
+
+    @property
+    def dependent(self) -> list[ExampleOutcome]:
+        return [o for o in self.outcomes if o.status == ExampleStatus.DEPENDENT]
+
+    @property
+    def root_causes(self) -> list[ExampleOutcome]:
+        return [o for o in self.outcomes if o.root_cause]

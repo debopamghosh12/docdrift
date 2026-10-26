@@ -1,13 +1,17 @@
 """Executable docs: run every example in a set of doc files against the real app, fix failures.
 
-Per doc file: start a fresh app, run its examples in order, and if any fail (and an LLM is
-available) ask for a fix of each failing example from its actual request/response, splice the
-fixes in, and re-run the whole file on a fresh app, up to `max_attempts` times. Each example
-ends up 🧪 passed, 🔁 fixed after running, or ❌ still failing.
+Per doc file: start a fresh app and run its examples in order. While one fails (and an LLM is
+available), ask for a fix of the *earliest* failing example from its actual request/response,
+splice it in and re-run the whole file on a fresh app (up to `max_attempts` fixes per example).
+Later examples that pass after that re-run failed only because of it (a GET 404s when the POST
+before it was rejected), so they are never "fixed" themselves. Each example ends up 🧪 passed,
+🔁 fixed after running, ⛓️ dependent on an earlier example, or ❌ still failing.
 """
 
 import logging
+from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from driftless.app_env import AppEnv, app_env
@@ -32,12 +36,14 @@ class DocRunner:
         sandbox: Sandbox,
         fixer: ExampleFixer | None = None,
         max_attempts: int = 2,
+        max_fixes_per_file: int = 8,
         request_timeout: float = 10.0,
         progress: Progress | None = None,
     ) -> None:
         self._sandbox = sandbox
         self._fixer = fixer
-        self._max_attempts = max_attempts
+        self._max_attempts = max_attempts  # fix attempts per example
+        self._max_fixes_per_file = max_fixes_per_file  # LLM calls per file
         self._request_timeout = request_timeout
         self._progress = progress or (lambda message: log.info(message))
 
@@ -66,22 +72,52 @@ class DocRunner:
     ) -> None:
         first = self._run(box, path, text, env)
         runs = first
-        fixes: dict[int, list[str]] = {}
-        notes: dict[int, str] = {}
-        for _ in range(self._max_attempts):
-            failing = [r for r in runs if not r.passed]
-            if not failing or self._fixer is None:
+        state = _FileState()
+        while self._fixer is not None and state.fix_calls < self._max_fixes_per_file:
+            target = self._next_target(runs, state)
+            if target is None:
                 break
-            text, applied = self._fix(text, runs, failing, files, fixes, notes)
-            if not applied:
-                break
-            runs = self._run(box, path, text, env)
-            if len(runs) != len(first):  # a fix changed the example count; stop rather than mislabel
+            fixed_text = self._fix(text, runs, target, files, state)
+            if fixed_text is None:
+                continue
+            rerun = self._run(box, path, fixed_text, env)
+            text = fixed_text
+            if len(rerun) != len(first):  # a fix changed the example count; stop rather than mislabel
                 report.errors.append(f"{path}: a fix changed the number of examples; kept it unverified")
+                runs = rerun
                 break
+            # Later examples that only start passing now were knock-on failures of this one.
+            root = f"{target.example.label} (line {target.example.line})"
+            for before, after in zip(runs, rerun):
+                index = after.example.index
+                if index > target.example.index and not before.passed and after.passed and index not in state.fixes:
+                    state.caused_by[index] = root
+            runs = rerun
+        blocked_by = _blocked(runs, state)
         report.contents[path] = text
         for before, after in zip(first, runs):
-            report.outcomes.append(_outcome(before, after, fixes.get(before.example.index, []), notes.get(before.example.index)))
+            index = before.example.index
+            report.outcomes.append(
+                _outcome(
+                    before, after, state.fixes.get(index, []), state.notes.get(index),
+                    state.caused_by.get(index), blocked_by.get(index),
+                )
+            )
+
+    def _next_target(self, runs: list[ExampleRun], state: "_FileState") -> ExampleRun | None:
+        """The earliest failing example, if it may still be fixed.
+
+        Only the earliest: a later failure is often a knock-on effect (a GET 404s because the
+        POST before it never created anything), and fixing it would write that wrong behavior
+        into the docs. Once the earliest can't be fixed, later failures are left alone.
+        """
+        failing = next((r for r in runs if not r.passed), None)
+        if failing is None:
+            return None
+        index = failing.example.index
+        if index in state.given_up or state.attempts[index] >= self._max_attempts:
+            return None
+        return failing
 
     def _run(self, box: Sandbox, path: str, text: str, env: AppEnv) -> list[ExampleRun]:
         examples = extract_examples(path, text)
@@ -89,37 +125,53 @@ class DocRunner:
             return run_examples(examples, base_url, timeout=self._request_timeout)
 
     def _fix(
-        self,
-        text: str,
-        runs: list[ExampleRun],
-        failing: list[ExampleRun],
-        files: dict[str, str],
-        fixes: dict[int, list[str]],
-        notes: dict[int, str],
-    ) -> tuple[str, bool]:
+        self, text: str, runs: list[ExampleRun], run: ExampleRun, files: dict[str, str], state: "_FileState"
+    ) -> str | None:
+        """Ask for a fix of `run`'s example: the new file text, or None (and a note) if there is none."""
         assert self._fixer is not None
+        example = run.example
+        state.attempts[example.index] += 1
         lines = text.split("\n")
-        replacements: list[tuple[Example, list[str]]] = []
-        for run in failing:
-            example = run.example
-            if _overlaps_another(example, [r.example for r in runs]):
-                notes[example.index] = "shares a code block with another example; not auto-fixed"
-                continue
-            snippet = "\n".join(lines[example.start_line : example.end_line])
-            try:
-                reply = self._fixer.fix(run, snippet, route_code(files, example))
-            except LLMError as exc:
-                notes[example.index] = f"fix failed: {exc}"
-                continue
-            if not reply.fixed or not reply.replacement or reply.replacement.strip() == snippet.strip():
-                notes[example.index] = f"model could not fix it: {reply.reason}"
-                continue
-            fixes.setdefault(example.index, []).append(reply.reason)
-            notes.pop(example.index, None)
-            replacements.append((example, reply.replacement.strip("\n").split("\n")))
-        for example, new_lines in sorted(replacements, key=lambda r: r[0].start_line, reverse=True):
-            lines[example.start_line : example.end_line] = new_lines
-        return "\n".join(lines), bool(replacements)
+        if _overlaps_another(example, [r.example for r in runs]):
+            return state.give_up(example.index, "shares a code block with another example; not auto-fixed")
+        snippet = "\n".join(lines[example.start_line : example.end_line])
+        state.fix_calls += 1
+        try:
+            reply = self._fixer.fix(run, snippet, route_code(files, example))
+        except LLMError as exc:
+            return state.give_up(example.index, f"fix failed: {exc}")
+        if not reply.fixed or not reply.replacement or reply.replacement.strip() == snippet.strip():
+            return state.give_up(example.index, f"model could not fix it: {reply.reason}")
+        state.fixes.setdefault(example.index, []).append(reply.reason)
+        state.notes.pop(example.index, None)
+        lines[example.start_line : example.end_line] = reply.replacement.strip("\n").split("\n")
+        return "\n".join(lines)
+
+
+@dataclass
+class _FileState:
+    """Bookkeeping of one doc file's fix loop, keyed by example index."""
+
+    attempts: Counter[int] = field(default_factory=Counter)
+    fixes: dict[int, list[str]] = field(default_factory=dict)
+    notes: dict[int, str] = field(default_factory=dict)
+    caused_by: dict[int, str] = field(default_factory=dict)
+    given_up: set[int] = field(default_factory=set)
+    fix_calls: int = 0
+
+    def give_up(self, index: int, note: str) -> None:
+        self.notes[index] = note
+        self.given_up.add(index)
+
+
+def _blocked(runs: list[ExampleRun], state: _FileState) -> dict[int, str]:
+    """Failing examples after the earliest one that still fails: not fixed, as it may be their cause."""
+    failing = [r for r in runs if not r.passed]
+    if not failing:
+        return {}
+    root = failing[0].example
+    blocked_by = f"{root.label} (line {root.line})"
+    return {r.example.index: blocked_by for r in failing[1:]}
 
 
 def _overlaps_another(example: Example, examples: list[Example]) -> bool:
@@ -129,11 +181,22 @@ def _overlaps_another(example: Example, examples: list[Example]) -> bool:
     )
 
 
-def _outcome(first: ExampleRun, last: ExampleRun, fixes: list[str], note: str | None) -> ExampleOutcome:
-    if last.passed:
-        status = ExampleStatus.PASSED if first.passed else ExampleStatus.FIXED
+def _outcome(
+    first: ExampleRun,
+    last: ExampleRun,
+    fixes: list[str],
+    note: str | None,
+    caused_by: str | None = None,
+    blocked_by: str | None = None,
+) -> ExampleOutcome:
+    if last.passed and first.passed:
+        status = ExampleStatus.PASSED
+    elif last.passed:
+        status = ExampleStatus.DEPENDENT if caused_by and not fixes else ExampleStatus.FIXED
     else:
         status = ExampleStatus.FAILING
+    if status == ExampleStatus.FAILING and blocked_by and not note:
+        note = f"not auto-fixed: it runs after {blocked_by}, which still fails and may be the cause"
     return ExampleOutcome(
         file=last.example.file,
         label=last.example.label,
@@ -143,10 +206,12 @@ def _outcome(first: ExampleRun, last: ExampleRun, fixes: list[str], note: str | 
         actual_status=first.actual_status,
         final_expected_status=last.example.expected_status,
         final_actual_status=last.actual_status,
-        failures=first.failures if status == ExampleStatus.FIXED else last.failures,
+        failures=last.failures if status == ExampleStatus.FAILING else first.failures,
         warnings=last.warnings,
-        fixes=fixes if status != ExampleStatus.PASSED else [],
+        fixes=fixes if status in (ExampleStatus.FIXED, ExampleStatus.FAILING) else [],
         note=note if status == ExampleStatus.FAILING else None,
+        caused_by=caused_by if status == ExampleStatus.DEPENDENT else None,
+        blocked_by=blocked_by if status == ExampleStatus.FAILING else None,
     )
 
 

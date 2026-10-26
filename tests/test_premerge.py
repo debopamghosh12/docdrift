@@ -115,8 +115,8 @@ def test_failing_examples_fail_the_status_even_without_stale_sections() -> None:
     gh = FakeCheckRepo()
     PreMergeChecker(gh).report(open_pr(), DocProposals(execution=failing_example()), 0.5)
     [comment] = gh.comments.values()
-    assert "## ❌ 1 documented example fails against this PR" in comment.body
-    assert gh.statuses[-1][1:3] == ("failure", "1 failing example")
+    assert "## ⚠️ This PR breaks 1 documented example (`GET /a`) in `docs/api.md`" in comment.body
+    assert gh.statuses[-1][1:3] == ("failure", "1 broken example (GET /a)")
 
 
 def test_review_errors_are_not_reported_as_in_sync() -> None:
@@ -219,3 +219,36 @@ def test_merge_after_a_pre_merge_fix_comments_in_sync_without_a_docs_pr() -> Non
 
 def _never(pull: PullState) -> PendingFixes:
     raise AssertionError("fixes must not be computed for a declined apply")
+
+
+def test_knock_on_example_failures_are_reported_under_their_root_cause() -> None:
+    from tests.test_example_impact import notes_pr_outcomes
+
+    gh = FakeCheckRepo()
+    report = ExecutionReport(outcomes=notes_pr_outcomes())
+    PreMergeChecker(gh).report(open_pr(), DocProposals(execution=report), 0.5)
+    body = gh.comments[1].body
+
+    assert "## ⚠️ This PR breaks 1 documented example (`POST /notes`) in 2 files\n" in body
+    assert "4 later examples failed as a result and pass once it's fixed." in body
+    assert "stale" not in body.split("\n", 2)[1]  # headline: no "6 doc sections stale"
+    assert body.count("| example `POST /notes`") == 2 and "| example `GET /notes/1`" not in body
+    assert "<summary>⛓️ 4 later examples failed only because of an earlier one" in body
+    assert gh.statuses[-1][1:3] == ("failure", "1 broken example (POST /notes)")
+
+
+def test_in_sync_comment_says_what_was_checked() -> None:
+    gh = FakeCheckRepo()
+    report = ExecutionReport(outcomes=[
+        ExampleOutcome(file="docs/api.md", label=f"GET /{n}", line=n, status=ExampleStatus.PASSED) for n in range(3)
+    ])
+    r = open_pr()
+    PreMergeChecker(gh).report(r.model_copy(update={"candidates": []}), DocProposals(execution=report), 0.5)
+    body = gh.comments[1].body
+    assert "checked 0" not in body
+    sections, files = len(r.sections), len(r.docs)
+    assert (
+        f"Driftless checked {sections} doc sections and ran 3 examples across {files} doc file"
+        in body
+    )
+    assert "All 3 documented examples pass against the app." in body

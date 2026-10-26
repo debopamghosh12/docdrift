@@ -10,6 +10,7 @@ _LABELS = {
     ExampleStatus.PASSED: "[green]🧪 passed[/]",
     ExampleStatus.FIXED: "[cyan]🔁 fixed after running[/]",
     ExampleStatus.FAILING: "[red]❌ still failing[/]",
+    ExampleStatus.DEPENDENT: "[yellow]⛓️ failed only because of an earlier example[/]",
 }
 
 
@@ -46,6 +47,9 @@ def _details(outcome: ExampleOutcome) -> str:
         lines += [f"[dim]{escape(f)}[/]" for f in outcome.failures]
         if outcome.note:
             lines.append(f"[dim]{escape(outcome.note)}[/]")
+    elif outcome.status == ExampleStatus.DEPENDENT:
+        lines.append(f"[dim]because of {escape(outcome.caused_by or 'an earlier example')}[/]")
+        lines += [f"[dim]was: {escape(f)}[/]" for f in outcome.failures]
     lines += [f"[yellow]warn: {escape(w)}[/]" for w in outcome.warnings]
     return "\n".join(lines)
 

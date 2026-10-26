@@ -171,3 +171,90 @@ def test_runtime_only_pr_with_unfixable_examples_flags_them_on_the_source_pr() -
     comment = next(iter(gh.comments.values())).body
     assert "❌ **Driftless:** 1 documented example failed against the app" in comment
     assert "`README.md` › `POST /items` (line 22): status is 201, docs say 200" in comment
+
+
+CHAIN_DOCS = """# Items
+
+## Create an item
+
+```bash
+curl -X POST http://localhost:8000/items \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Pen"}'
+```
+
+`201 Created`
+```json
+{"id": 1, "name": "Pen", "price": 1.5, "created_at": "2024-01-01T00:00:00Z"}
+```
+
+## Get an item
+
+```bash
+curl http://localhost:8000/items/1
+```
+
+`200 OK`
+```json
+{"id": 1, "name": "Pen", "price": 1.5, "created_at": "2024-01-01T00:00:00Z"}
+```
+"""
+
+
+class BodyFixingLLM:
+    """Adds the missing `price` to the POST body; asked to fix anything else, it fails the test."""
+
+    def __init__(self, can_fix: bool = True) -> None:
+        self.labels: list[str] = []
+        self.can_fix = can_fix
+
+    def complete(self, system, user, schema, check=None, output_tokens=0):
+        snippet = user.split("<example>\n", 1)[1].split("\n</example>", 1)[0]
+        assert "curl -X POST" in snippet, "only the root cause may be sent to the fixer"
+        self.labels.append("POST /items")
+        if not self.can_fix:
+            return ExampleFix(fixed=False, target="none", reason="unsure", replacement=None)
+        reply = ExampleFix(
+            fixed=True, target="request", reason="price is required.",
+            replacement=snippet.replace('{"name": "Pen"}', '{"name": "Pen", "price": 1.5}'),
+        )
+        if check:
+            check(reply)
+        return reply
+
+
+def run_chain(llm: BodyFixingLLM):
+    files = {**fixture_files(), "docs/chain.md": CHAIN_DOCS}
+    runner = DocRunner(Sandbox(files, python=sys.executable), ExampleFixer(llm))  # type: ignore[arg-type]
+    return runner.execute({"docs/chain.md": CHAIN_DOCS}, files)
+
+
+def test_later_example_that_passes_after_an_earlier_fix_is_dependent_not_stale() -> None:
+    llm = BodyFixingLLM()
+    report = run_chain(llm)
+
+    post, get = report.outcomes
+    assert (post.label, post.status, post.actual_status) == ("POST /items", ExampleStatus.FIXED, 422)
+    assert (get.label, get.status, get.actual_status) == ("GET /items/1", ExampleStatus.DEPENDENT, 404)
+    assert get.caused_by == "POST /items (line 5)" and get.fixes == []
+    assert get.failures == ["status is 404, docs say 200"]
+    assert llm.labels == ["POST /items"]  # the GET was never sent to the fixer
+    assert [o.label for o in report.root_causes] == ["POST /items"] and report.passing == 2
+    assert report.contents["docs/chain.md"].count('"price": 1.5}\'') == 1
+
+    body = "\n".join(render_execution(report))
+    assert "| ⛓️ failed only because of POST /items (line 5) |" in body
+    assert "<summary>⛓️ 1 later example failed only because of an earlier one (it passes once that one is fixed)</summary>" in body
+    assert "`docs/chain.md` › `GET /items/1` (line 16): failed only because of POST /items (line 5)" in body
+
+
+def test_failures_after_an_unfixable_example_are_not_fixed_on_their_own() -> None:
+    llm = BodyFixingLLM(can_fix=False)
+    report = run_chain(llm)
+
+    post, get = report.outcomes
+    assert post.status == ExampleStatus.FAILING and post.blocked_by is None and post.root_cause
+    assert get.status == ExampleStatus.FAILING and get.blocked_by == "POST /items (line 5)" and not get.root_cause
+    assert get.note == "not auto-fixed: it runs after POST /items (line 5), which still fails and may be the cause"
+    assert llm.labels == ["POST /items"]  # writing the GET's 404 into the docs would be wrong
+    assert report.contents["docs/chain.md"] == CHAIN_DOCS

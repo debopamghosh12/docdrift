@@ -55,7 +55,8 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/example_fixer.py` — LLM fix of a failing example from the actual request/response; deterministic tidy of the fix
 - `driftless/app_env.py` — env for the app under test: only vars the code requires without a default (documented value or typed placeholder); vars the code reads are stripped from the host env
 - `driftless/baseline.py` — pre-merge: mark examples/sections already stale at the PR's merge base as pre-existing
-- `driftless/executable_docs.py` — per doc file: fresh app, run, fix, re-run (2 attempts) -> 🧪 passed / 🔁 fixed / ❌ failing
+- `driftless/executable_docs.py` — per doc file: fresh app, run, fix the earliest failing example, re-run (2 attempts each) -> 🧪 passed / 🔁 fixed / ⛓️ dependent on an earlier example / ❌ failing
+- `driftless/example_impact.py` — root-cause vs. knock-on example failures; headline wording
 - `driftless/execution.py` / `execution_report.py` — outcome models / rich table
 - `driftless/memory.py` — SQLite memory of decisions & reviewer feedback
 - `driftless/pipeline.py` — orchestrates the end-to-end run

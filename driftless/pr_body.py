@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from driftless.doc_index import is_doc_path
+from driftless.example_impact import example_impact, impact_sentence
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.proposals import DocProposals, Verification, VerificationStatus
@@ -86,6 +87,9 @@ def render_pr_body(
         f"{_summary(updated, added, fixed, len(changed_files))}",
         "",
     ]
+    impact = example_impact(execution.outcomes) if execution else None
+    if impact and impact.roots:
+        parts += [impact_sentence(impact, f"#{pr.number}"), ""]
     if not rows and not proposals.covered:
         parts.append(
             "Static analysis found no stale sections. Every change below comes from running the docs' "
@@ -130,7 +134,6 @@ def render_sync_comment(
 ) -> str:
     """Comment for the source PR when Driftless has nothing to commit."""
     rows = change_rows(proposals, min_confidence)
-    docs = len(result.docs)
     header = source_marker(result.pr.number)
     if skipped_files:
         files = ", ".join(f"`{p}`" for p in skipped_files)
@@ -141,25 +144,28 @@ def render_sync_comment(
         )
     execution = proposals.execution
     if not rows and execution and execution.failing:
+        roots = [o for o in execution.failing if o.root_cause]
         lines = [
             header,
-            f"❌ **Driftless:** {_plural(len(execution.failing), 'documented example')} failed against the app "
+            f"❌ **Driftless:** {_plural(len(roots), 'documented example')} failed against the app "
             "and could not be fixed automatically, so no docs PR was opened. Please update them:",
             "",
         ]
         lines += [
-            f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}" for o in execution.failing
+            f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}"
+            + (f" ({_cell(o.note)})" if o.blocked_by and o.note else "")
+            for o in execution.failing
         ]
         return "\n".join(lines + ["", "---", FOOTER, ""])
     if not rows:
         ran = ""
         if execution and execution.total:
-            ran = f" All {_plural(execution.total, 'documented example')} pass against the app."
+            ran = f" {_all_pass(execution.total)} against the app."
         if any(is_doc_path(f.path) for f in result.pr.files):
             ran += " The docs were updated in this PR before it was merged."
         return (
             f"{header}\n✅ **Driftless:** the docs are already in sync with this PR. "
-            f"Checked {len(result.candidates)} related section(s) across {docs} doc file(s); "
+            f"{checked_sentence(result, execution)}; "
             f"nothing is stale and no new interface is undocumented.{ran}\n\n---\n" + FOOTER + "\n"
         )
     lines = [
@@ -176,7 +182,22 @@ EXAMPLE_LABELS = {
     ExampleStatus.PASSED: "🧪 passed",
     ExampleStatus.FIXED: "🔁 fixed after running",
     ExampleStatus.FAILING: "❌ still failing",
+    ExampleStatus.DEPENDENT: "⛓️ failed only because of an earlier example",
 }
+
+
+def checked_sentence(result: AnalysisResult, execution: ExecutionReport | None) -> str:
+    """What Driftless actually looked at: 'Checked 14 doc sections (3 reviewed by the model) and
+    ran 6 examples across 2 doc files'."""
+    sections = _plural(len(result.sections), "doc section")
+    if result.candidates:
+        sections += f" ({len(result.candidates)} reviewed by the model)"
+    ran = f" and ran {_plural(execution.total, 'example')}" if execution and execution.total else ""
+    return f"Checked {sections}{ran} across {_plural(len(result.docs), 'doc file')}"
+
+
+def _all_pass(n: int) -> str:
+    return "The 1 documented example passes" if n == 1 else f"All {n} documented examples pass"
 
 
 def render_execution(report: ExecutionReport) -> list[str]:
@@ -196,7 +217,7 @@ def render_execution(report: ExecutionReport) -> list[str]:
         ]
         parts += [
             f"| `{o.file}` | `{_cell(o.label)}` (line {o.line}) | {_expected_status(o)} "
-            f"| {_status(o.final_actual_status)} | {EXAMPLE_LABELS[o.status]}{' (pre-existing)' if o.pre_existing else ''} |"
+            f"| {_status(o.final_actual_status)} | {_example_result(o)}{' (pre-existing)' if o.pre_existing else ''} |"
             for o in report.outcomes
         ]
     if report.fixed:
@@ -213,6 +234,21 @@ def render_execution(report: ExecutionReport) -> list[str]:
             + (f" ({_cell(o.note)})" if o.note else "")
             for o in failing
         ]
+    if report.dependent:
+        n = len(report.dependent)
+        parts += [
+            "",
+            "<details>",
+            f"<summary>⛓️ {_plural(n, 'later example')} failed only because of an earlier one "
+            f"({'it passes' if n == 1 else 'they pass'} once that one is fixed)</summary>",
+            "",
+        ]
+        parts += [
+            f"- `{o.file}` › `{o.label}` (line {o.line}): failed only because of {_cell(o.caused_by or 'an earlier example')}"
+            f" (was: {_cell('; '.join(o.failures))})"
+            for o in report.dependent
+        ]
+        parts += ["", "</details>"]
     warned = [o for o in report.outcomes if o.warnings]
     if warned:
         parts += ["", "<details>", "<summary>Value differences (warnings, not failures)</summary>", ""]
@@ -239,6 +275,12 @@ def render_check_body(repo: str, ref: str, report: ExecutionReport, changed_file
         "",
     ]
     return "\n".join(parts)
+
+
+def _example_result(outcome: ExampleOutcome) -> str:
+    if outcome.status == ExampleStatus.DEPENDENT and outcome.caused_by:
+        return f"⛓️ failed only because of {_cell(outcome.caused_by)}"
+    return EXAMPLE_LABELS[outcome.status]
 
 
 def _expected_status(outcome: ExampleOutcome) -> str:
