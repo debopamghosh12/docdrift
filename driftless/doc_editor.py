@@ -56,8 +56,14 @@ def apply_proposals(docs: list[DocFile], proposals: DocProposals, min_confidence
     return {path: text for path, text in contents.items() if text != originals[path]}
 
 
+def proposed_docs(docs: list[DocFile], proposals: DocProposals, min_confidence: float) -> dict[str, str]:
+    """Every doc file as the proposals leave it, unchanged files included."""
+    return {**{d.path: d.content for d in docs}, **apply_proposals(docs, proposals, min_confidence)}
+
+
 def final_docs(docs: list[DocFile], proposals: DocProposals, min_confidence: float) -> dict[str, str]:
-    """Like apply_proposals, plus fixes made to examples after running them."""
+    """Changed files only: apply_proposals plus fixes made to examples after running them (in any
+    doc file, so a PR that only changes runtime behavior still gets a docs PR)."""
     updated = apply_proposals(docs, proposals, min_confidence)
     if proposals.execution:
         originals = {d.path: d.content for d in docs}

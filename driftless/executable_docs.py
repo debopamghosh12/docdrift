@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from driftless.doc_editor import apply_proposals
+from driftless.doc_editor import proposed_docs
 from driftless.doc_index import is_doc_path
 from driftless.example_fixer import ExampleFixer, route_code
 from driftless.examples import Example, documented_env_defaults, extract_examples
@@ -164,12 +164,13 @@ def execute_docs(
     cache_dir: Path = Path(".driftless_cache"),
     startup_timeout: float = 30.0,
     progress: Progress | None = None,
+    python: str | None = None,
 ) -> ExecutionReport:
-    sandbox = Sandbox(files, cache_dir=cache_dir, startup_timeout=startup_timeout)
+    sandbox = Sandbox(files, cache_dir=cache_dir, python=python, startup_timeout=startup_timeout)
     return DocRunner(sandbox, fixer, progress=progress).execute(docs, files)
 
 
-def execute_updated_docs(
+def execute_all_docs(
     docs: list[DocFile],
     files: dict[str, str],
     proposals: DocProposals,
@@ -178,9 +179,13 @@ def execute_updated_docs(
     cache_dir: Path = Path(".driftless_cache"),
     startup_timeout: float = 30.0,
     progress: Progress | None = None,
-) -> ExecutionReport | None:
-    """Run the examples in every doc file the proposals changed; None when nothing changed."""
-    updated = apply_proposals(docs, proposals, min_confidence)
-    if not updated:
-        return None
-    return execute_docs(files, updated, fixer, cache_dir, startup_timeout, progress)
+    python: str | None = None,
+) -> ExecutionReport:
+    """Run the examples in every doc file, as the proposals leave it.
+
+    Unchanged files run too: a PR that only changes runtime behavior (a status code, a response
+    field) breaks examples that static analysis has no reason to look at.
+    """
+    return execute_docs(
+        files, proposed_docs(docs, proposals, min_confidence), fixer, cache_dir, startup_timeout, progress, python
+    )

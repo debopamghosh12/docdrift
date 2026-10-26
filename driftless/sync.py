@@ -36,9 +36,9 @@ def sync_pull_request(
         from pathlib import Path
 
         from driftless.example_fixer import ExampleFixer
-        from driftless.executable_docs import execute_updated_docs
+        from driftless.executable_docs import execute_all_docs
 
-        proposals.execution = execute_updated_docs(
+        proposals.execution = execute_all_docs(
             result.docs,
             client.fetch_files(repo, result.pr.merge_commit_sha),
             proposals,

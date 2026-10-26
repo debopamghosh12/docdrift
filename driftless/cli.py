@@ -39,7 +39,7 @@ def run(
         0.5, "--min-confidence", min=0.0, max=1.0, help="Drop LLM proposals below this confidence."
     ),
     execute: bool = typer.Option(
-        True, "--execute/--no-execute", help="Run the examples in updated docs against the app (runs repo code)."
+        True, "--execute/--no-execute", help="Run the examples in all docs against the app (runs repo code)."
     ),
 ) -> None:
     """Sync docs with a merged PR: find stale sections, rewrite and verify them, run examples, open a docs PR."""
@@ -70,7 +70,7 @@ def run(
     proposals = _propose(result, llm, min_confidence, console)
     if execute and settings.execute_examples:
         files = client.fetch_files(repo, result.pr.merge_commit_sha)
-        proposals.execution = _execute_updated(result, proposals, files, llm, min_confidence, settings, console)
+        proposals.execution = _execute_all(result, proposals, files, llm, min_confidence, settings, console)
     if dry_run:
         return
 
@@ -132,7 +132,7 @@ def _propose(
     return proposals
 
 
-def _execute_updated(
+def _execute_all(
     result: "AnalysisResult",
     proposals: "DocProposals",
     files: dict[str, str],
@@ -140,16 +140,16 @@ def _execute_updated(
     min_confidence: float,
     settings: "Settings",
     console: Console,
-) -> "ExecutionReport | None":
+) -> "ExecutionReport":
     from pathlib import Path
 
-    from driftless.doc_editor import apply_proposals
+    from driftless.doc_editor import proposed_docs
     from driftless.example_fixer import ExampleFixer
-    from driftless.executable_docs import execute_updated_docs
+    from driftless.executable_docs import execute_all_docs
     from driftless.execution_report import render_execution
 
-    with console.status("Running the examples in the updated docs against the app...") as status:
-        report = execute_updated_docs(
+    with console.status("Running the examples in all docs against the app...") as status:
+        report = execute_all_docs(
             result.docs,
             files,
             proposals,
@@ -159,11 +159,8 @@ def _execute_updated(
             settings.sandbox_startup_timeout,
             progress=status.update,
         )
-    if report is None:
-        console.print("[dim]No updated doc files, so no examples to run.[/]")
-        return None
-    render_execution(report, console, title="Executed examples in updated docs")
-    _render_example_fixes(apply_proposals(result.docs, proposals, min_confidence), report, console)
+    render_execution(report, console, title="Executed examples")
+    _render_example_fixes(proposed_docs(result.docs, proposals, min_confidence), report, console)
     return report
 
 

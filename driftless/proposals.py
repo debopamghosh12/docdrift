@@ -85,4 +85,4 @@ class DocProposals(BaseModel):
     insertions: list[Insertion] = Field(default_factory=list)
     covered: list[CoveredItem] = Field(default_factory=list)  # already documented by a rewrite
     errors: list[str] = Field(default_factory=list)
-    execution: ExecutionReport | None = None  # examples run in the updated files (fixes included)
+    execution: ExecutionReport | None = None  # examples run in all doc files (fixes included)

@@ -69,6 +69,8 @@ def render_pr_body(
     dropped = [r for r in rows if not r.applied]
     updated = sum(1 for r in applied if r.change == "updated")
     added = sum(1 for r in applied if r.change == "added")
+    execution = proposals.execution
+    fixed = len(execution.fixed) if execution else 0
 
     parts = [
         source_marker(pr.number),
@@ -76,11 +78,19 @@ def render_pr_body(
         "",
         f"Syncs the documentation with [{pr.repo}#{pr.number}]({pr.url}): **{_cell(pr.title)}**.",
         "",
-        f"{_summary(updated, added, len(changed_files))}",
+        f"{_summary(updated, added, fixed, len(changed_files))}",
         "",
-        "| File | Section | Change | Why | Confidence | Verification |",
-        "|------|---------|--------|-----|-----------:|--------------|",
     ]
+    if not rows and not proposals.covered:
+        parts.append(
+            "Static analysis found no stale sections. Every change below comes from running the docs' "
+            "examples against the app at the merge commit."
+        )
+    else:
+        parts += [
+            "| File | Section | Change | Why | Confidence | Verification |",
+            "|------|---------|--------|-----|-----------:|--------------|",
+        ]
     parts += [
         f"| `{r.file}` | {_cell(r.section)} | {r.change} | {_cell(_first_sentence(r.why))} "
         f"| {r.confidence:.2f} | {_cell(status_label(r.verification))} |"
@@ -90,8 +100,8 @@ def render_pr_body(
         parts.append(
             f"| `{covered.file}` | {_cell(covered.item.name)} | covered | documented by a section update above | | |"
         )
-    if proposals.execution:
-        parts += ["", *render_execution(proposals.execution)]
+    if execution:
+        parts += ["", *render_execution(execution)]
     if dropped:
         parts += ["", "### Dropped changes", ""]
         parts += [f"- `{r.file}` › {r.section}: {_dropped_reason(r.verification)}" for r in dropped]
@@ -101,10 +111,12 @@ def render_pr_body(
             f"- `{path}` changed on the default branch since #{pr.number} was merged; rerun Driftless to update it."
             for path in skipped_files
         ]
-    parts += ["", "<details>", "<summary>Model reasoning per change</summary>", ""]
-    for r in rows:
-        parts += _reasoning(r)
-    parts += ["</details>", "", "---", FOOTER, ""]
+    if rows:
+        parts += ["", "<details>", "<summary>Model reasoning per change</summary>", ""]
+        for r in rows:
+            parts += _reasoning(r)
+        parts.append("</details>")
+    parts += ["", "---", FOOTER, ""]
     return "\n".join(parts)
 
 
@@ -122,11 +134,26 @@ def render_sync_comment(
             f"since #{result.pr.number} was merged, so nothing was committed. Rerun Driftless to sync them."
             "\n\n---\n" + FOOTER + "\n"
         )
+    execution = proposals.execution
+    if not rows and execution and execution.failing:
+        lines = [
+            header,
+            f"❌ **Driftless:** {_plural(len(execution.failing), 'documented example')} failed against the app "
+            "and could not be fixed automatically, so no docs PR was opened. Please update them:",
+            "",
+        ]
+        lines += [
+            f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}" for o in execution.failing
+        ]
+        return "\n".join(lines + ["", "---", FOOTER, ""])
     if not rows:
+        ran = ""
+        if execution and execution.total:
+            ran = f" All {_plural(execution.total, 'documented example')} pass against the app."
         return (
             f"{header}\n✅ **Driftless:** the docs are already in sync with this PR. "
             f"Checked {len(result.candidates)} related section(s) across {docs} doc file(s); "
-            "nothing is stale and no new interface is undocumented.\n\n---\n" + FOOTER + "\n"
+            f"nothing is stale and no new interface is undocumented.{ran}\n\n---\n" + FOOTER + "\n"
         )
     lines = [
         header,
@@ -151,7 +178,7 @@ def render_execution(report: ExecutionReport) -> list[str]:
     parts = [
         f"### 🧪 Executed examples: {report.passing}/{report.total} passing",
         "",
-        f"Every request example in the updated files was run{app}, started from this commit "
+        f"Every request example in the docs was run{app}, started from this commit "
         "(a fresh app per file, examples in document order).",
         "",
     ]
@@ -225,8 +252,12 @@ def status_label(verification: Verification) -> str:
     return f"⚠️ dropped: {_dropped_reason(verification)}"
 
 
-def _summary(updated: int, added: int, files: int) -> str:
-    return f"Updated {_plural(updated, 'section')}, added {_plural(added, 'section')} across {_plural(files, 'file')}."
+def _summary(updated: int, added: int, fixed_examples: int, files: int) -> str:
+    fixed = f", fixed {_plural(fixed_examples, 'example')} after running" if fixed_examples else ""
+    return (
+        f"Updated {_plural(updated, 'section')}, added {_plural(added, 'section')}{fixed} "
+        f"across {_plural(files, 'file')}."
+    )
 
 
 def _plural(n: int, noun: str) -> str:
