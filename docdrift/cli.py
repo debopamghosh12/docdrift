@@ -77,7 +77,7 @@ def run(
 
 def _propose(result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, console: Console) -> None:
     from docdrift.analyzer import Analyzer
-    from docdrift.doc_editor import apply_edits, build_edits, unified_diff
+    from docdrift.doc_editor import apply_proposals, unified_diff
     from docdrift.proposal_report import render_diffs, render_proposals
 
     with console.status(
@@ -86,8 +86,7 @@ def _propose(result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, co
         proposals = Analyzer(llm).propose(result, min_confidence=min_confidence)
     render_proposals(proposals, min_confidence, console)
 
-    edits = build_edits(result.docs, result.sections, proposals, min_confidence)
-    updated = apply_edits(result.docs, edits)
+    updated = apply_proposals(result.docs, proposals, min_confidence)
     originals = {d.path: d.content for d in result.docs}
     render_diffs({p: unified_diff(p, originals[p], new) for p, new in updated.items()}, console)
 

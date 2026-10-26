@@ -1,4 +1,4 @@
-from docdrift.doc_editor import apply_edits, build_edits, unified_diff
+from docdrift.doc_editor import apply_proposals, insert_section, unified_diff
 from docdrift.doc_index import index_document
 from docdrift.models import DocFile, MissingDoc
 from docdrift.proposals import (
@@ -34,9 +34,7 @@ def insertion(after: str | None, confidence: float = 0.9) -> Insertion:
 
 
 def apply(proposals: DocProposals, min_confidence: float = 0.5) -> str:
-    sections = index_document(DOC)
-    edits = build_edits([DOC], sections, proposals, min_confidence)
-    return apply_edits([DOC], edits).get(DOC.path, DOC.content)
+    return apply_proposals([DOC], proposals, min_confidence).get(DOC.path, DOC.content)
 
 
 def test_replacement_keeps_separating_blank_line() -> None:
@@ -87,3 +85,33 @@ def test_unified_diff_format() -> None:
     diff = unified_diff("README.md", "a\nb\n", "a\nc\n")
     assert diff.startswith("--- a/README.md\n+++ b/README.md\n")
     assert "-b\n+c\n" in diff
+
+
+def test_insert_goes_before_trailing_cross_reference_lines() -> None:
+    content = "## Endpoints\n\n### `DELETE /a`\n\nDelete a.\n\nSee docs/api.md for details.\n\n## Layout\n"
+    new = insert_section("README.md", content, "DELETE /a", "### `PATCH /a`\n\nPatch a.")
+    assert new == (
+        "## Endpoints\n\n### `DELETE /a`\n\nDelete a.\n\n### `PATCH /a`\n\nPatch a.\n\n"
+        "See docs/api.md for details.\n\n## Layout\n"
+    )
+
+
+def test_insert_matches_thematic_break_separators() -> None:
+    content = "# API\n\n## Get\n\nGet it.\n\n---\n\n## Delete\n\nDelete it.\n"
+    new = insert_section("docs/api.md", content, "Get", "## Update\n\nUpdate it.")
+    assert new == "# API\n\n## Get\n\nGet it.\n\n---\n\n## Update\n\nUpdate it.\n\n---\n\n## Delete\n\nDelete it.\n"
+    # After the last section there is no break below, so the one above its heading is copied.
+    new = insert_section("docs/api.md", content, "Delete", "## Update\n\nUpdate it.")
+    assert new.endswith("Delete it.\n\n---\n\n## Update\n\nUpdate it.\n")
+
+
+def test_no_separator_when_file_has_none_or_only_front_matter() -> None:
+    content = "---\ntitle: x\n---\n## Get\n\nGet it.\n"
+    new = insert_section("docs/a.md", content, None, "## Put\n\nPut it.")
+    assert new.endswith("Get it.\n\n## Put\n\nPut it.\n")
+
+
+def test_insert_after_rewritten_section_uses_its_new_text() -> None:
+    rewrite = "### `GET /a`\n\nGet a.\n\nSee also b.\nAnd more lines."
+    proposals = DocProposals(findings=[finding("`GET /a`", rewrite)], insertions=[insertion("GET /a")])
+    assert "And more lines.\n\n### `PATCH /a`\n\nPatch a.\n\n## Layout" in apply(proposals)

@@ -25,7 +25,7 @@ Instructions:
 - "file" must be exactly "$target_file".
 - "after_heading" must be the exact text of an existing heading in $target_file, copied from the outline without the leading "#" characters. The new section is inserted after that heading's section and all of its subsections. Use null to append to the end of the file.
 - "section" is the complete Markdown for the new section, including its heading. Match the heading level, structure, tone and formatting of the neighbouring sections (for example, if sibling endpoints show a curl example and responses, do the same).
-- Document only facts visible in the diff, the change summary, or the existing documentation. Do not invent defaults, limits, status codes or messages.
+- Document only facts visible in the diff, the change summary, or the existing documentation. Do not invent defaults, limits, status codes or messages, and do not add example values or settings that are not in the code or the original docs.
 - "reason" is one sentence explaining what you documented and why it goes there.
 - "confidence" is your confidence in the proposal, from 0 to 1.
 
