@@ -259,3 +259,77 @@ def test_failures_after_an_unfixable_example_are_not_fixed_on_their_own() -> Non
     assert get.note == "not auto-fixed: POST /items (line 5) failed in this run, so what it reads was never created"
     assert llm.labels == ["POST /items"]  # writing the GET's 404 into the docs would be wrong
     assert report.contents["docs/chain.md"] == CHAIN_DOCS
+
+
+ECHO_DOCS = r"""# Items
+
+## Create an item
+
+```bash
+curl -X POST http://localhost:8000/items \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Pen"}'
+```
+
+`201 Created`
+```json
+{"id": 1, "name": "Pen", "price": 1.5, "created_at": "2024-01-01T00:00:00Z"}
+```
+
+## Get an item
+
+```bash
+curl http://localhost:8000/items/1
+```
+
+`200 OK`
+```json
+{"id": 1, "name": "Pen", "price": 1.5, "created_at": "2024-01-01T00:00:00Z"}
+```
+
+## Create another item
+
+```bash
+curl -X POST http://localhost:8000/items \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Pen", "price": 2.0}'
+```
+
+`201 Created`
+```json
+{"id": 2, "name": "Pen", "price": 2.0, "created_at": "2024-01-01T00:00:00Z"}
+```
+"""
+
+
+class RenamingLLM:
+    """Fixes the POST by adding `price` and renaming the item, in its request and its own response."""
+
+    def complete(self, system, user, schema, check=None, output_tokens=0):
+        snippet = user.split("<example>\n", 1)[1].split("\n</example>", 1)[0]
+        replacement = snippet.replace('{"name": "Pen"}', '{"name": "Ink", "price": 1.5}').replace(
+            '"name": "Pen", "price": 1.5', '"name": "Ink", "price": 1.5'
+        )
+        reply = ExampleFix(fixed=True, target="request", reason="price is required.", replacement=replacement)
+        if check:
+            check(reply)
+        return reply
+
+
+def test_a_fixed_request_value_is_updated_where_later_responses_echo_it() -> None:
+    files = {**fixture_files(), "docs/echo.md": ECHO_DOCS}
+    runner = DocRunner(Sandbox(files, python=sys.executable), ExampleFixer(RenamingLLM()))  # type: ignore[arg-type]
+    report = runner.execute({"docs/echo.md": ECHO_DOCS}, files)
+
+    post, get, other = report.outcomes
+    assert (post.status, get.status, other.status) == (ExampleStatus.FIXED, ExampleStatus.DEPENDENT, ExampleStatus.PASSED)
+    assert report.passing == report.total == 3
+    assert not any("name" in w for o in report.outcomes for w in o.warnings)  # no value warnings left for it
+    assert 'Also updated it where documented responses echo it: GET /items/1 (line 18): `name` "Pen" → "Ink"' in post.fixes[0]
+
+    text = report.contents["docs/echo.md"]
+    get_section = text.split("## Get an item", 1)[1].split("## Create another item", 1)[0]
+    assert '"name": "Ink", "price": 1.5' in get_section and "Pen" not in get_section
+    # The later POST sends "Pen" on purpose, and its response echoes that: neither is touched.
+    other_section = text.split("## Create another item", 1)[1]
+    assert other_section == ECHO_DOCS.split("## Create another item", 1)[1]

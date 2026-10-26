@@ -48,6 +48,7 @@ class Example(BaseModel):
     start_line: int
     end_line: int
     source: str  # the request block as written
+    request_end_line: int = 0  # end of the request block: the documented result is [this, end_line)
 
     @property
     def label(self) -> str:
@@ -112,6 +113,7 @@ def _example(
         start_line=block.start,
         end_line=end,
         source=block.text,
+        request_end_line=block.end,
     )
 
 

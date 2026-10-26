@@ -169,11 +169,15 @@ def test_reduced_limit_with_a_shorter_body_fixes_the_request_and_keeps_201() -> 
     post, get, delete = report.outcomes
     assert (post.status, post.actual_status) == (ExampleStatus.FIXED, 422)
     assert (post.expected_status, post.final_expected_status, post.final_actual_status) == (201, 201, 201)
-    assert post.fixes == ["The body must fit MAX_BODY_LENGTH; use 'Milk'."]
+    assert post.fixes == [
+        "The body must fit MAX_BODY_LENGTH; use 'Milk'. Also updated it where documented responses echo it: "
+        'GET /notes/1 (line 18): `body` "Buy milk" → "Milk".'
+    ]
     assert [(o.status, o.caused_by) for o in (get, delete)] == [(ExampleStatus.DEPENDENT, "POST /notes (line 5)")] * 2
     readme = report.contents["README.md"]
-    # Only the POST section's request and response change; the GET's documented note stays.
-    assert readme == DOCS.replace('"body": "Buy milk"', '"body": "Milk"', 2)
+    # The POST's request and response change, and so does the GET that echoes the new body.
+    assert readme == DOCS.replace('"body": "Buy milk"', '"body": "Milk"')
+    assert get.warnings == []
     assert "`201 Created`" in readme and "422" not in readme and "404" not in readme
     assert report.passing == report.total == 3
 

@@ -3,7 +3,8 @@
 Per doc file: start a fresh app and run its examples in order. While one fails (and an LLM is
 available), ask for a fix of the *earliest* failing example from its actual request/response,
 splice it in and re-run the whole file on a fresh app (up to `max_attempts` fixes per example).
-A fix is kept only if the example then passes, and happy paths stay happy: a fix may never turn a
+A value the fix changed in the request is also updated in later documented responses that echo it
+(echo.py), confirmed by another run. A fix is kept only if the example then passes, and happy paths stay happy: a fix may never turn a
 documented 2xx into an error. When no request succeeds, the example "needs a human" and its docs
 are left alone. Later examples that pass after that re-run failed only because of it, and a 404 on
 a resource whose create (POST/PUT) failed is a knock-on: neither is ever "fixed" itself. Each
@@ -19,6 +20,7 @@ from pathlib import Path
 from driftless.app_env import AppEnv, app_env
 from driftless.doc_editor import proposed_docs
 from driftless.doc_index import is_doc_path
+from driftless.echo import changed_request_values, echo_request_values
 from driftless.example_fixer import ExampleFixer, route_code
 from driftless.examples import Example, extract_examples
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport, is_success
@@ -94,6 +96,9 @@ class DocRunner:
                 # Only fixes that make the example pass when run reach the docs.
                 state.reject(index, f"it still failed when run: {'; '.join(rerun[index].failures)}")
                 continue
+            fixed_text, rerun, echoed = self._echo(box, path, env, target.example, fixed_text, rerun)
+            if echoed:
+                reason += f" Also updated it where documented responses echo it: {'; '.join(echoed)}."
             state.fixes.setdefault(index, []).append(reason)
             state.notes.pop(index, None)
             # Later examples that only start passing now were knock-on failures of this one.
@@ -130,6 +135,20 @@ class DocRunner:
         if index in state.given_up or state.attempts[index] >= self._max_attempts:
             return None
         return failing
+
+    def _echo(
+        self, box: Sandbox, path: str, env: AppEnv, before: Example, text: str, runs: list[ExampleRun]
+    ) -> tuple[str, list[ExampleRun], list[str]]:
+        """Update later documented responses that echo a value the fix changed in the request
+        (see echo.py), then re-run the file: kept only if no example that passed now fails."""
+        changes = changed_request_values(before, runs[before.index].example)
+        echoed, notes = echo_request_values(text, before.index, changes, runs) if changes else (text, [])
+        if not notes:
+            return text, runs, []
+        confirm = self._run(box, path, echoed, env)
+        if len(confirm) != len(runs) or any(r.passed and not c.passed for r, c in zip(runs, confirm)):
+            return text, runs, []
+        return echoed, confirm, notes
 
     def _run(self, box: Sandbox, path: str, text: str, env: AppEnv) -> list[ExampleRun]:
         examples = extract_examples(path, text)

@@ -52,6 +52,7 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/examples.py` — runnable examples from markdown (curl in shell blocks, `http` blocks) + documented status/JSON; documented env defaults
 - `driftless/sandbox.py` — find the FastAPI app (ast), cached venv under `.driftless_cache/`, uvicorn on a free port, kill the process tree
 - `driftless/executor.py` — run examples in order against the app; status must match, JSON structure must match (ids/timestamps flexible, value diffs = warnings)
+- `driftless/echo.py` — after an accepted fix: request-body values it changed are updated in documented responses (same file, that example on) that echo them, only where the live response confirms; never in requests
 - `driftless/example_fixer.py` — LLM fix of a failing example from the actual request/response; deterministic tidy of the fix
 - `driftless/app_env.py` — env for the app under test: only vars the code requires without a default (documented value or typed placeholder); vars the code reads are stripped from the host env
 - `driftless/baseline.py` — pre-merge: mark examples/sections already stale at the PR's merge base as pre-existing
