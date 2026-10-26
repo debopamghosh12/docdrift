@@ -39,7 +39,10 @@ def _change(kind: ChangeKind) -> str:
 
 def _signature(symbol: SymbolChange) -> str:
     if symbol.change == ChangeKind.RENAMED:
-        return f"{symbol.old_name} -> {symbol.name}"
+        renamed = f"{symbol.old_name} -> {symbol.name}"
+        if symbol.old_signature != symbol.new_signature:
+            renamed += f"\n{symbol.old_signature}\n-> {symbol.new_signature}"
+        return renamed
     if symbol.change == ChangeKind.SIGNATURE_CHANGED:
         return f"{symbol.old_signature}\n-> {symbol.new_signature}"
     return symbol.new_signature or symbol.old_signature or ""
@@ -51,6 +54,8 @@ def _symbols_table(result: AnalysisResult) -> Table:
         table.add_column(column)
     for s in result.changeset.symbols:
         name = s.name if s.public else f"[dim]{s.name}[/dim]"
+        if s.route:
+            name += f"\n[dim]handler of {s.route}[/dim]"
         table.add_row(_change(s.change), s.kind.value, name, _signature(s), s.file)
     if not result.changeset.symbols:
         table.add_row("[dim]none[/dim]", "", "", "", "")
@@ -65,7 +70,12 @@ def _interfaces_table(result: AnalysisResult) -> Table:
     for env in cs.env_vars:
         table.add_row("env var", _change(env.change), env.name, env.file)
     for route in cs.routes:
-        table.add_row("route", _change(route.change), f"{route.method} {route.path}", route.file)
+        name = route.label
+        if route.old_label:
+            name = f"{route.old_label} -> {route.label}"
+        elif route.change == ChangeKind.MODIFIED and route.handler:
+            name += f"\n[dim]handler {route.handler} changed[/dim]"
+        table.add_row("route", _change(route.change), name, route.file)
     for flag in cs.cli_flags:
         table.add_row("cli flag", _change(flag.change), flag.flag, flag.file)
     if not (cs.env_vars or cs.routes or cs.cli_flags):

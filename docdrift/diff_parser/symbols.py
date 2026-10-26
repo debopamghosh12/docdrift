@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 from docdrift.models import ChangeKind, SymbolChange, SymbolKind
 
@@ -18,6 +19,11 @@ class SymbolDef:
 
 def short_name(qualname: str) -> str:
     return qualname.rsplit(".", 1)[-1]
+
+
+# A removed+added pair with bodies at least this similar *and* a shared name token is a rename.
+FUZZY_RENAME_RATIO = 0.7
+_NAME_TOKEN_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
 
 
 def is_public(qualname: str) -> bool:
@@ -73,24 +79,56 @@ def _parent(qualname: str) -> str:
 def _pair_renames(
     removed: list[SymbolDef], added: list[SymbolDef]
 ) -> list[tuple[SymbolDef, SymbolDef]]:
-    """Pair a removed and an added symbol when their bodies are identical and the match is unique."""
+    """Pair removed/added symbols: first identical bodies (unique match), then similar bodies.
+
+    The fuzzy pass also requires a shared name token (list_notes -> fetch_notes) because tiny
+    unrelated functions often have near-identical ASTs (farewell vs. welcome scores ~0.9).
+    """
     pairs: list[tuple[SymbolDef, SymbolDef]] = []
     used: set[str] = set()
-    for old in removed:
-        if not old.body_key:
-            continue
-        matches = [
+
+    def options(old: SymbolDef) -> list[SymbolDef]:
+        return [
             new
             for new in added
             if new.name not in used
             and new.kind == old.kind
-            and new.body_key == old.body_key
+            and new.body_key
             and _parent(new.name) == _parent(old.name)
         ]
-        if len(matches) == 1:
-            pairs.append((old, matches[0]))
-            used.add(matches[0].name)
+
+    for old in removed:
+        if not old.body_key:
+            continue
+        exact = [new for new in options(old) if new.body_key == old.body_key]
+        if len(exact) == 1:
+            pairs.append((old, exact[0]))
+            used.add(exact[0].name)
+
+    paired_old = {old.name for old, _ in pairs}
+    for old in removed:
+        if not old.body_key or old.name in paired_old:
+            continue
+        scored = [
+            (_similarity(old, new), new)
+            for new in options(old)
+            if _name_tokens(old.name) & _name_tokens(new.name)
+        ]
+        if scored:
+            ratio, best = max(scored, key=lambda item: item[0])
+            if ratio >= FUZZY_RENAME_RATIO:
+                pairs.append((old, best))
+                used.add(best.name)
     return pairs
+
+
+def _similarity(old: SymbolDef, new: SymbolDef) -> float:
+    assert old.body_key is not None and new.body_key is not None
+    return SequenceMatcher(None, old.body_key, new.body_key, autojunk=False).ratio()
+
+
+def _name_tokens(qualname: str) -> set[str]:
+    return {t.lower() for t in _NAME_TOKEN_RE.findall(short_name(qualname)) if len(t) > 2}
 
 
 def _make_change(

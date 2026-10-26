@@ -181,12 +181,55 @@ def test_fastapi_route_changes() -> None:
         '@app.post("/items")\ndef create():\n    return {}\n'
     )
     cs = python_changeset(before, after)
-    routes = {(r.method, r.path): r.change for r in cs.routes}
-    assert routes == {
-        ("GET", "/items/{item_id}"): ChangeKind.REMOVED,
-        ("GET", "/v2/items/{item_id}"): ChangeKind.ADDED,
-        ("POST", "/items"): ChangeKind.ADDED,
+    routes = {r.label: r for r in cs.routes}
+    assert {label: r.change for label, r in routes.items()} == {
+        "GET /v2/items/{item_id}": ChangeKind.MODIFIED,  # same handler, new decorator path
+        "POST /items": ChangeKind.ADDED,
     }
+    assert routes["GET /v2/items/{item_id}"].old_label == "GET /items/{item_id}"
+    assert routes["POST /items"].handler == "create"
+
+
+def test_fastapi_decorator_method_change_is_modified_route() -> None:
+    before = '@app.put("/notes/{note_id}")\ndef update_note(note_id: int):\n    return note_id\n'
+    after = '@app.patch("/notes/{note_id}")\ndef update_note(note_id: int):\n    return note_id\n'
+    (route,) = python_changeset(before, after).routes
+    assert (route.label, route.change, route.old_label) == (
+        "PATCH /notes/{note_id}",
+        ChangeKind.MODIFIED,
+        "PUT /notes/{note_id}",
+    )
+
+
+def test_handler_signature_change_marks_route_modified_and_tags_symbol() -> None:
+    before = '@app.get("/notes")\ndef list_notes(limit: int = 20):\n    return []\n'
+    after = '@app.get("/notes")\ndef list_notes(limit: int = 20, offset: int = 0):\n    return []\n'
+    cs = python_changeset(before, after)
+    assert [(r.label, r.change, r.handler) for r in cs.routes] == [
+        ("GET /notes", ChangeKind.MODIFIED, "list_notes")
+    ]
+    assert cs.symbols[0].route == "GET /notes"
+
+
+def test_api_route_with_methods() -> None:
+    after = '@router.api_route("/sync", methods=["GET", "POST"])\nasync def sync():\n    pass\n'
+    cs = python_changeset("", after)
+    assert {r.label for r in cs.routes} == {"GET /sync", "POST /sync"}
+
+
+def test_fuzzy_rename_requires_similar_body_and_shared_name_token() -> None:
+    before = (
+        "def list_notes(limit: int = 20) -> list[dict]:\n"
+        '    """Return up to `limit` notes, oldest first."""\n'
+        "    return list(_notes.values())[:limit]\n"
+    )
+    after = (
+        "def fetch_notes(limit: int = 20, offset: int = 0) -> list[dict]:\n"
+        '    """Return up to `limit` notes, oldest first, skipping `offset`."""\n'
+        "    return list(_notes.values())[offset : offset + limit]\n"
+    )
+    (symbol,) = python_changeset(before, after).symbols
+    assert (symbol.change, symbol.old_name, symbol.name) == (ChangeKind.RENAMED, "list_notes", "fetch_notes")
 
 
 def test_dict_get_is_not_a_route() -> None:

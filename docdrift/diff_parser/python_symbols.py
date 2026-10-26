@@ -1,12 +1,14 @@
 """Precise Python symbol extraction using the `ast` module."""
 
 import ast
+from collections.abc import Iterator
 
 from docdrift.diff_parser.symbols import SymbolDef
 from docdrift.models import SymbolKind
 
 _FUNCTION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
+HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
 
 def parse_python(source: str) -> ast.Module | None:
@@ -29,6 +31,53 @@ def extract_python_symbols(tree: ast.Module) -> dict[str, SymbolDef]:
                     qualname = f"{node.name}.{child.name}"
                     _add(symbols, _function_def(child, qualname, SymbolKind.METHOD))
     return symbols
+
+
+def extract_python_routes(tree: ast.Module) -> dict[tuple[str, str], str]:
+    """Map (METHOD, path) to the handler's qualname for FastAPI-style route decorators."""
+    routes: dict[tuple[str, str], str] = {}
+    for qualname, node in _functions(tree):
+        for decorator in node.decorator_list:
+            for route in _decorator_routes(decorator):
+                routes[route] = qualname
+    return routes
+
+
+def _functions(tree: ast.Module) -> Iterator[tuple[str, FunctionNode]]:
+    for node in tree.body:
+        if isinstance(node, _FUNCTION_TYPES):
+            yield node.name, node
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, _FUNCTION_TYPES):
+                    yield f"{node.name}.{child.name}", child
+
+
+def _decorator_routes(decorator: ast.expr) -> list[tuple[str, str]]:
+    if not (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)):
+        return []
+    path = _string_arg(decorator, position=0, keyword="path")
+    if path is None or not path.startswith("/"):
+        return []
+    attr = decorator.func.attr
+    if attr in HTTP_METHODS:
+        return [(attr.upper(), path)]
+    if attr == "api_route":
+        methods = next((k.value for k in decorator.keywords if k.arg == "methods"), None)
+        if isinstance(methods, (ast.List, ast.Tuple, ast.Set)):
+            names = [e.value for e in methods.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            return [(m.upper(), path) for m in names]
+        return [("GET", path)]
+    return []
+
+
+def _string_arg(call: ast.Call, position: int, keyword: str) -> str | None:
+    node: ast.expr | None = call.args[position] if len(call.args) > position else None
+    if node is None:
+        node = next((k.value for k in call.keywords if k.arg == keyword), None)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
 def extract_settings_env_vars(tree: ast.Module) -> set[str]:

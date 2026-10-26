@@ -6,11 +6,13 @@ from typing import TypeVar
 from docdrift.diff_parser.patch import hunk_headers, parse_unified_diff, reconstruct
 from docdrift.diff_parser.patterns import extract_cli_flags, extract_env_vars, extract_routes
 from docdrift.diff_parser.python_symbols import (
+    extract_python_routes,
     extract_python_symbols,
     extract_settings_env_vars,
     parse_python,
 )
 from docdrift.diff_parser.regex_symbols import extract_js_symbols, extract_python_symbols_regex
+from docdrift.diff_parser.routes import RouteTable, diff_routes, tag_route_handlers
 from docdrift.diff_parser.symbols import diff_symbols
 from docdrift.models import (
     ChangedFile,
@@ -19,7 +21,6 @@ from docdrift.models import (
     CliFlagChange,
     EnvVarChange,
     FileStatus,
-    RouteChange,
 )
 
 __all__ = ["build_changeset", "is_source_path", "is_test_path", "parse_unified_diff"]
@@ -56,6 +57,9 @@ def build_changeset(files: list[ChangedFile]) -> ChangeSet:
 def _analyze_file(changed: ChangedFile, changeset: ChangeSet) -> None:
     before, after = _file_texts(changed)
     env_before, env_after = extract_env_vars(before), extract_env_vars(after)
+    # Regex routes don't know their handler; the Python AST path below replaces them.
+    routes_before: RouteTable = dict.fromkeys(extract_routes(before))
+    routes_after: RouteTable = dict.fromkeys(extract_routes(after))
 
     if PurePosixPath(changed.path).suffix in PYTHON_EXTENSIONS:
         tree_before, tree_after = parse_python(before), parse_python(after)
@@ -64,6 +68,8 @@ def _analyze_file(changed: ChangedFile, changeset: ChangeSet) -> None:
             symbols_after = extract_python_symbols(tree_after)
             env_before |= extract_settings_env_vars(tree_before)
             env_after |= extract_settings_env_vars(tree_after)
+            routes_before = dict(extract_python_routes(tree_before))
+            routes_after = dict(extract_python_routes(tree_after))
         else:
             symbols_before = extract_python_symbols_regex(before)
             symbols_after = extract_python_symbols_regex(after)
@@ -71,16 +77,17 @@ def _analyze_file(changed: ChangedFile, changeset: ChangeSet) -> None:
         symbols_before, symbols_after = extract_js_symbols(before), extract_js_symbols(after)
 
     path = changed.path
-    changeset.symbols.extend(
-        diff_symbols(symbols_before, symbols_after, path, touched=hunk_headers(changed.patch))
+    symbol_changes = diff_symbols(
+        symbols_before, symbols_after, path, touched=hunk_headers(changed.patch)
+    )
+    tag_route_handlers(symbol_changes, routes_before, routes_after)
+    changeset.symbols.extend(symbol_changes)
+    changeset.routes.extend(
+        diff_routes(routes_before, routes_after, {s.name for s in symbol_changes}, path)
     )
     changeset.env_vars.extend(
         EnvVarChange(name=name, change=change, file=path)
         for name, change in _set_changes(env_before, env_after)
-    )
-    changeset.routes.extend(
-        RouteChange(method=method, path=route, change=change, file=path)
-        for (method, route), change in _set_changes(extract_routes(before), extract_routes(after))
     )
     changeset.cli_flags.extend(
         CliFlagChange(flag=flag, change=change, file=path)

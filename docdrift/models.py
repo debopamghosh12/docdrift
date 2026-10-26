@@ -65,6 +65,7 @@ class SymbolChange(BaseModel):
     old_signature: str | None = None
     new_signature: str | None = None
     public: bool = True
+    route: str | None = None  # "METHOD /path" when this function is an HTTP route handler
 
 
 class EnvVarChange(BaseModel):
@@ -78,6 +79,17 @@ class RouteChange(BaseModel):
     path: str
     change: ChangeKind
     file: str
+    handler: str | None = None
+    old_method: str | None = None
+    old_path: str | None = None
+
+    @property
+    def label(self) -> str:
+        return f"{self.method} {self.path}"
+
+    @property
+    def old_label(self) -> str | None:
+        return f"{self.old_method} {self.old_path}" if self.old_path else None
 
 
 class CliFlagChange(BaseModel):

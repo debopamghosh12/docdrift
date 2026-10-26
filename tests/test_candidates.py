@@ -66,7 +66,30 @@ def test_candidates_ranked_by_relevance() -> None:
 
 def test_route_params_match_across_styles() -> None:
     api = next(c for c in select_candidates(sections(), changeset()) if c.section.heading == "API")
-    assert api.matched_terms == ["/users/:id"]
+    assert set(api.matched_terms) == {"/users/:id", "GET /users/:id"}
+
+
+def test_missing_route_requires_method_match() -> None:
+    # The path is documented for GET, but the new PATCH route isn't.
+    cs = ChangeSet(
+        routes=[RouteChange(method="PATCH", path="/users/{id}", change=ChangeKind.ADDED, file="a.py")]
+    )
+    assert [m.name for m in find_missing_docs(sections(), cs)] == ["PATCH /users/{id}"]
+
+
+def test_missing_skips_route_handlers_and_their_models_and_dedupes() -> None:
+    cs = ChangeSet(
+        symbols=[
+            SymbolChange(
+                name="update_user", kind=SymbolKind.FUNCTION, change=ChangeKind.ADDED, file="main.py",
+                new_signature="update_user(id: int, patch: UserPatch)", route="PATCH /users/{id}",
+            ),
+            SymbolChange(name="UserPatch", kind=SymbolKind.CLASS, change=ChangeKind.ADDED, file="main.py"),
+            SymbolChange(name="save", kind=SymbolKind.FUNCTION, change=ChangeKind.ADDED, file="db.py"),
+            SymbolChange(name="save", kind=SymbolKind.FUNCTION, change=ChangeKind.ADDED, file="cache.py"),
+        ]
+    )
+    assert [(m.name, m.file) for m in find_missing_docs(sections(), cs)] == [("save", "db.py")]
 
 
 def test_generic_words_only_match_in_code() -> None:

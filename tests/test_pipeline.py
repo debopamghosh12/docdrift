@@ -35,7 +35,8 @@ def test_pipeline_end_to_end() -> None:
     result = analyze_pull_request(FakeProvider(), "me/lib", 7)
     assert [s.name for s in result.changeset.symbols] == ["open_connection"]
     assert [c.section.heading for c in result.candidates] == ["Usage"]
-    assert [m.name for m in result.missing] == ["open_connection"]
+    # The old name is documented and that section is a candidate, so it's not "missing".
+    assert result.missing == []
 
     out = StringIO()
     render_analysis(result, Console(file=out, width=160))
