@@ -72,6 +72,10 @@ class MemoryCommands:
         if self._gh.permission(repo, user) not in WRITE_PERMISSIONS:
             reply = f"⚠️ @{user} only users with write access to this repository can change or read what Driftless remembers."
             return self._reply(repo, number, reply, PublishAction.DECLINED)
+        return self._reply(repo, number, self.respond(repo, user, command), PublishAction.COMMENTED)
+
+    def respond(self, repo: str, user: str, command: Command) -> str:
+        """Carry out the command and say what changed (overridden in Action mode)."""
         handler = {
             CommandName.IGNORE: self._ignore,
             CommandName.UNIGNORE: self._unignore,
@@ -79,7 +83,7 @@ class MemoryCommands:
             CommandName.UNSTYLE: self._unstyle,
             CommandName.MEMORY: self._show,
         }[command.name]
-        return self._reply(repo, number, handler(repo, user, command.argument), PublishAction.COMMENTED)
+        return handler(repo, user, command.argument)
 
     def _ignore(self, repo: str, user: str, rule: str) -> str:
         if not self._memory.add_ignore(repo, rule, user):

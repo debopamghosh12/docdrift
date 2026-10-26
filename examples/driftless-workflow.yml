@@ -1,0 +1,46 @@
+# Driftless: docs that never drift.
+# Copy this file to .github/workflows/driftless.yml and add your LLM key as the repo secret
+# GROQ_API_KEY (Settings → Secrets and variables → Actions → New repository secret).
+# To let Driftless open docs PRs, also enable Settings → Actions → General →
+# "Allow GitHub Actions to create and approve pull requests".
+name: Driftless
+
+on:
+  pull_request:
+    # opened/synchronize/reopened/ready_for_review: pre-merge check; closed + merged: docs PR
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  issue_comment:
+    # /driftless apply, /driftless memory, ...
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: Fix broken examples and open a PR
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 6 * * 1" # weekly docs health audit, Mondays 06:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  driftless:
+    # Comments only matter when they're a /driftless command on a pull request.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/driftless'))
+    runs-on: ubuntu-latest
+    concurrency:
+      # A newer push to the same PR cancels its running check; comments and merges each run on their own.
+      group: driftless-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action != 'closed' && 'check' || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+    steps:
+      - uses: debopamghosh12/driftless@v1
+        with:
+          llm-api-key: ${{ secrets.GROQ_API_KEY }}
+          fix: ${{ github.event.inputs.fix || 'false' }}
+          # fail-on-drift: "false"   # report drift without failing the job

@@ -22,17 +22,14 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from driftless.commands import CommandName, parse_command
 from driftless.config import Settings, get_settings
+from driftless.events import EventKind, EventPlan, route_event
 from driftless.jobs import Enqueued, Job, JobMode, JobStore, Syncer
 from driftless.memory import Memory
-from driftless.pipeline import is_own_branch
 from driftless.web import install_web
 from driftless.web.github_browser import RepoBrowser
 
 logger = logging.getLogger("driftless.server")
-
-PRE_MERGE_ACTIONS = frozenset({"opened", "synchronize", "reopened", "ready_for_review"})
 
 
 def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
@@ -89,35 +86,29 @@ def create_app(
 
         if x_github_event == "ping":
             return JSONResponse({"status": "ok", "zen": payload.get("zen")})
-        if x_github_event == "pull_request":
-            return _pull_request(store, memory, background, payload)
-        if x_github_event == "issue_comment":
-            return _issue_comment(store, background, payload)
-        return _ignored(f"event {x_github_event!r}")
+        return _dispatch(store, memory, background, x_github_event, route_event(x_github_event, payload))
 
     return app
 
 
-def _pull_request(
-    store: JobStore, memory: Memory, background: BackgroundTasks, payload: dict[str, Any]
+def _dispatch(
+    store: JobStore, memory: Memory, background: BackgroundTasks, event: str, plan: EventPlan
 ) -> JSONResponse:
-    pr = payload.get("pull_request") or {}
-    action = payload.get("action")
-    repo, number = payload["repository"]["full_name"], int(pr["number"])
-    if is_own_branch(pr.get("head", {}).get("ref", "")):
-        if action == "closed":
-            return _docs_pr_closed(memory, repo, number, bool(pr.get("merged")))
-        return _ignored("Driftless's own docs PR")
-    if action == "closed":
-        if not pr.get("merged"):
-            return _ignored("pull request was closed without merging")
+    repo, number = plan.repo, plan.number
+    if plan.kind == EventKind.DOCS_PR_CLOSED:
+        return _docs_pr_closed(memory, repo, number, plan.merged)
+    if plan.kind == EventKind.POST_MERGE:
         return _queue(store, background, store.enqueue(repo, number, JobMode.POST_MERGE))
-    if action in PRE_MERGE_ACTIONS:
-        if pr.get("draft"):
-            return _ignored("draft pull request")
-        head_sha = pr.get("head", {}).get("sha", "")
-        return _queue(store, background, store.enqueue(repo, number, JobMode.PRE_MERGE, head_sha=head_sha))
-    return _ignored(f"pull_request action {action!r}")
+    if plan.kind == EventKind.PRE_MERGE:
+        return _queue(store, background, store.enqueue(repo, number, JobMode.PRE_MERGE, head_sha=plan.head_sha))
+    if plan.kind == EventKind.APPLY:
+        return _queue(store, background, store.enqueue(repo, number, JobMode.APPLY, requested_by=plan.user))
+    if plan.kind == EventKind.MEMORY and plan.command is not None:
+        enqueued = store.enqueue(
+            repo, number, JobMode.MEMORY, requested_by=plan.user, command=plan.command.text, comment_id=plan.comment_id
+        )
+        return _queue(store, background, enqueued)
+    return _ignored(plan.reason or f"event {event!r}")  # audits are scheduled in Actions, not by webhooks
 
 
 def _docs_pr_closed(memory: Memory, repo: str, number: int, merged: bool) -> JSONResponse:
@@ -128,28 +119,6 @@ def _docs_pr_closed(memory: Memory, repo: str, number: int, merged: bool) -> JSO
     outcome = "accepted" if merged else "rejected"
     logger.info("remembered %d change(s) of docs PR %s#%d as %s", len(changes), repo, number, outcome)
     return JSONResponse({"status": "remembered", "outcome": outcome, "changes": len(changes)})
-
-
-def _issue_comment(store: JobStore, background: BackgroundTasks, payload: dict[str, Any]) -> JSONResponse:
-    issue, comment = payload.get("issue") or {}, payload.get("comment") or {}
-    if payload.get("action") != "created":
-        return _ignored("comment was not created")
-    if not issue.get("pull_request"):
-        return _ignored("comment is not on a pull request")
-    command = parse_command(comment.get("body") or "")
-    if command is None:
-        return _ignored("not a Driftless command")
-    # Write access and fork checks need API calls, so the job does them (and replies if refused).
-    user = (comment.get("user") or {}).get("login", "")
-    repo, number = payload["repository"]["full_name"], int(issue["number"])
-    if command.name == CommandName.APPLY:
-        if issue.get("state") != "open":
-            return _ignored("pull request is closed")
-        return _queue(store, background, store.enqueue(repo, number, JobMode.APPLY, requested_by=user))
-    enqueued = store.enqueue(
-        repo, number, JobMode.MEMORY, requested_by=user, command=command.text, comment_id=comment.get("id")
-    )
-    return _queue(store, background, enqueued)
 
 
 def _queue(store: JobStore, background: BackgroundTasks, enqueued: Enqueued) -> JSONResponse:

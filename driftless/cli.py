@@ -234,6 +234,106 @@ def _force_utf8_stdout() -> None:
 
 
 @app.command()
+def init() -> None:
+    """Ask for GITHUB_TOKEN and LLM_API_KEY (hidden) and write them to .env in this folder."""
+    from pathlib import Path
+
+    from dotenv import dotenv_values
+
+    from driftless.init_env import REQUIRED_SECRETS, env_is_ignored, write_env
+
+    _force_utf8_stdout()
+    console = Console()
+    folder = Path.cwd()
+    existing = dotenv_values(folder / ".env") if (folder / ".env").exists() else {}
+    hints = {
+        "GITHUB_TOKEN": "a GitHub token with access to your repos (https://github.com/settings/tokens)",
+        "LLM_API_KEY": "your LLM key; the default endpoint is Groq (https://console.groq.com/keys)",
+    }
+    values: dict[str, str] = {}
+    for key in REQUIRED_SECRETS:
+        keep = " (Enter keeps the current one)" if existing.get(key) else ""
+        console.print(f"[bold]{key}[/]: {hints[key]}{keep}")
+        value = typer.prompt(key, default="", show_default=False, hide_input=True).strip()
+        if value:
+            values[key] = value
+        elif not existing.get(key):
+            console.print(f"[yellow]{key} left empty; set it later in .env.[/]")
+    path = write_env(folder, values)
+    console.print(f"[green]Wrote {path}[/] (LLM_BASE_URL and LLM_MODEL default to Groq's openai/gpt-oss-120b).")
+    ignored = env_is_ignored(folder)
+    if ignored is False:
+        console.print("[bold yellow]⚠ .env is not gitignored here. Add it before committing:[/] echo .env >> .gitignore")
+    elif ignored is None:
+        console.print("[yellow]Keep .env out of version control (add `.env` to .gitignore).[/]")
+    console.print("Next: [bold]driftless doctor --repo owner/name[/]")
+
+
+@app.command()
+def doctor(
+    repo: str | None = typer.Option(None, "--repo", help="Also check the token's permissions on this repo (owner/name)."),
+) -> None:
+    """Check Python, the secrets, the LLM endpoint and the token's GitHub permissions. Prints no secrets."""
+    from driftless.config import get_settings
+    from driftless.doctor import run_checks
+
+    _force_utf8_stdout()
+    console = Console()
+    checks = run_checks(get_settings(), repo)
+    for check in checks:
+        mark = "✅" if check.ok else "❌"
+        optional = "" if check.required else " [dim](optional)[/]"
+        console.print(f"{mark} [bold]{check.name}[/]{optional}" + (f": {check.detail}" if check.detail else ""), highlight=False)
+        if not check.ok and check.fix:
+            console.print(f"   [dim]→ {check.fix}[/]", highlight=False)
+    if not repo:
+        console.print("[dim]Pass --repo owner/name to check the token's permissions on a repository.[/]")
+    if any(not c.ok and c.required for c in checks):
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def action(
+    fail_on_drift: bool = typer.Option(
+        True, "--fail-on-drift/--no-fail-on-drift", envvar="DRIFTLESS_FAIL_ON_DRIFT",
+        help="Exit 1 when a pre-merge check or audit finds drift (blocks merging as a required check).",
+    ),
+    fix: bool = typer.Option(False, "--fix", envvar="DRIFTLESS_FIX", help="Audits: fix broken examples and open a PR."),
+) -> None:
+    """Run inside GitHub Actions: handle the workflow's event (see action.yml)."""
+    import logging
+    import os
+
+    from driftless.action import ActionError, build_runner, plan_from_env, write_outputs
+    from driftless.config import get_settings
+    from driftless.events import EventKind
+    from driftless.repo_config import RepoConfigError
+    from driftless.sync import SyncConfigError
+
+    _force_utf8_stdout()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request drowns the job log
+    console = Console()
+    try:
+        plan = plan_from_env(os.environ, fix)
+        console.print(f"Event routed to: [bold]{plan.kind.value}[/]", highlight=False)
+        if plan.kind == EventKind.IGNORED:
+            console.print(f"Nothing to do: {plan.reason}.")
+            return
+        with _exit_on_errors(console):
+            runner = build_runner(get_settings(), plan.repo, fail_on_drift, say=lambda text: console.print(text, highlight=False))
+            outcome = runner.run(plan)
+    except (ActionError, SyncConfigError, RepoConfigError) as exc:
+        print(f"::error title=Driftless::{exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(outcome.summary, highlight=False)
+    write_outputs(plan, outcome)
+    if outcome.exit_code:
+        print(f"::error title=Driftless::{outcome.summary.splitlines()[0]}")
+        raise typer.Exit(code=outcome.exit_code)
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(8000, help="Bind port."),

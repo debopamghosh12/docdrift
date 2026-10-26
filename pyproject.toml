@@ -8,6 +8,16 @@ version = "0.1.0"
 description = "Docs that never drift. Driftless runs your docs to prove they work."
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "debopamghosh12" }]
+keywords = ["documentation", "docs", "github", "llm", "pull-requests", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+    "Topic :: Documentation",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -21,7 +31,13 @@ dependencies = [
     "rich>=13.7",
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/debopamghosh12/driftless"
+Source = "https://github.com/debopamghosh12/driftless"
 
 [project.optional-dependencies]
 dev = [
@@ -35,7 +51,7 @@ driftless = "driftless.cli:app"
 include = ["driftless*"]
 
 [tool.setuptools.package-data]
-driftless = ["web/templates/*.html", "web/templates/*/*.html"]
+driftless = ["prompts/*.txt", "web/templates/*.html", "web/templates/*/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

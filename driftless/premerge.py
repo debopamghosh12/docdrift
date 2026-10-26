@@ -132,7 +132,9 @@ class PreMergeChecker:
         commit_url = f"https://github.com/{repo}/commit/{sha}"
         files = sorted(fixes.files)
         self._gh.create_comment(repo, number, render_apply_reply(user, pull.head_ref, commit_url, files))
-        return PublishResult(action=PublishAction.COMMITTED, url=commit_url, branch=pull.head_ref, files=files)
+        return PublishResult(
+            action=PublishAction.COMMITTED, url=commit_url, branch=pull.head_ref, files=files, commit_sha=sha
+        )
 
     def _decline(self, repo: str, number: int, user: str, reason: str) -> PublishResult:
         url = self._gh.create_comment(repo, number, render_apply_declined(user, reason))

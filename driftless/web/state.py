@@ -3,13 +3,12 @@
 import re
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, PackageLoader, select_autoescape
 from markupsafe import Markup, escape
 
 from driftless.config import Settings
@@ -18,7 +17,6 @@ from driftless.memory import Memory
 from driftless.web.access import AllowedRepos, redact, valid_repo
 from driftless.web.github_browser import RepoBrowser, RepoSummary
 
-TEMPLATES = Path(__file__).parent / "templates"
 _CODE_RE = re.compile(r"`([^`]+)`")
 
 
@@ -56,7 +54,7 @@ class WebState:
 
 
 def make_templates(settings: Settings) -> Jinja2Templates:
-    env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(default=True))
+    env = Environment(loader=PackageLoader("driftless.web", "templates"), autoescape=select_autoescape(default=True))
     env.filters["code"] = inline_code
     env.filters["redact"] = lambda text: redact(text, settings)
     env.filters["ago"] = ago

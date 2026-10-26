@@ -1,0 +1,28 @@
+{
+  "action": "closed",
+  "number": 7,
+  "repository": {
+    "full_name": "acme/notes",
+    "default_branch": "main"
+  },
+  "pull_request": {
+    "number": 7,
+    "merged": true,
+    "draft": false,
+    "state": "closed",
+    "head": {
+      "ref": "feature/limit",
+      "sha": "abc1234def5678",
+      "repo": {
+        "full_name": "acme/notes"
+      }
+    },
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "acme/notes",
+        "default_branch": "main"
+      }
+    }
+  }
+}

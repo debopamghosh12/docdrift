@@ -1,0 +1,21 @@
+{
+  "action": "created",
+  "repository": {
+    "full_name": "acme/notes",
+    "default_branch": "main"
+  },
+  "issue": {
+    "number": 7,
+    "state": "open",
+    "pull_request": {
+      "url": "https://api.github.com/repos/acme/notes/pulls/7"
+    }
+  },
+  "comment": {
+    "id": 991,
+    "body": "LGTM, thanks!",
+    "user": {
+      "login": "maintainer"
+    }
+  }
+}

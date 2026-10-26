@@ -80,6 +80,7 @@ class PublishResult(BaseModel):
     skipped_files: list[str] = Field(default_factory=list)  # changed on the default branch since
     check_state: str | None = None  # pre-merge commit status: success / failure / error
     number: int | None = None  # the docs PR's number, when one was opened or updated
+    commit_sha: str | None = None  # the commit `/driftless apply` pushed
 
 
 CHECK_BRANCH = f"{DRIFTLESS_BRANCH_PREFIX}fix-examples"

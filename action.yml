@@ -1,0 +1,79 @@
+name: Driftless
+description: Docs that never drift. Checks every PR for stale docs, runs the documented examples, and opens fixes.
+author: debopamghosh12
+branding:
+  icon: book-open
+  color: green
+
+inputs:
+  llm-api-key:
+    description: API key for the OpenAI-compatible LLM endpoint (e.g. a Groq key stored as a repo secret).
+    required: true
+  llm-base-url:
+    description: OpenAI-compatible endpoint.
+    required: false
+    default: https://api.groq.com/openai/v1
+  llm-model:
+    description: Model name at that endpoint.
+    required: false
+    default: openai/gpt-oss-120b
+  github-token:
+    description: Token used to read the repo, comment, set statuses, push fixes and open PRs.
+    required: false
+    default: ${{ github.token }}
+  fail-on-drift:
+    description: Fail the job when a pre-merge check or audit finds drift, so it can block merging.
+    required: false
+    default: "true"
+  fix:
+    description: Audits (workflow_dispatch / schedule) also fix broken examples and open a PR.
+    required: false
+    default: "false"
+  execute-examples:
+    description: Run the documented curl/http examples against the repo's FastAPI app (runs the repo's code on the runner).
+    required: false
+    default: "true"
+  python-version:
+    description: Python used to run Driftless (3.11 or newer).
+    required: false
+    default: "3.11"
+
+outputs:
+  result:
+    description: What ran (pre-merge, post-merge, apply, memory, audit, docs-pr-closed or ignored).
+    value: ${{ steps.driftless.outputs.result }}
+  check-state:
+    description: The docs-in-sync state (success, failure or error), when a check or audit ran.
+    value: ${{ steps.driftless.outputs.check-state }}
+  url:
+    description: The comment, docs PR or commit Driftless created.
+    value: ${{ steps.driftless.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Driftless
+      shell: bash
+      run: python -m pip install --disable-pip-version-check --quiet "$ACTION_PATH"
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+
+    - name: Run Driftless
+      id: driftless
+      shell: bash
+      run: driftless action
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        LLM_API_KEY: ${{ inputs.llm-api-key }}
+        LLM_BASE_URL: ${{ inputs.llm-base-url }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        DRIFTLESS_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
+        DRIFTLESS_FIX: ${{ inputs.fix }}
+        EXECUTE_EXAMPLES: ${{ inputs.execute-examples }}
+        # Nothing outlives the runner: memory comes from .driftless.yml instead of SQLite.
+        DATABASE_URL: "sqlite://"
+        SANDBOX_CACHE_DIR: ${{ runner.temp }}/driftless-cache
