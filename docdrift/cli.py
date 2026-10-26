@@ -34,6 +34,7 @@ def run(
     ),
 ) -> None:
     """Analyze a merged PR: show its ChangeSet and the doc sections likely to be stale."""
+    import httpx
     from github import GithubException
 
     from docdrift.config import get_settings
@@ -58,6 +59,9 @@ def run(
         message = exc.data.get("message") if isinstance(exc.data, dict) else exc
         console.print(f"[red]GitHub API error ({exc.status}): {message}[/]")
         raise typer.Exit(code=1) from exc
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Could not download the repository snapshot: {exc}[/]")
+        raise typer.Exit(code=1) from exc
     render_analysis(result, console)
 
     if not dry_run:
@@ -79,7 +83,7 @@ def _propose(result: "AnalysisResult", llm: "JsonLLM", min_confidence: float, co
     with console.status(
         f"Reviewing {len(result.candidates)} sections and {len(result.missing)} missing items..."
     ):
-        proposals = Analyzer(llm).propose(result)
+        proposals = Analyzer(llm).propose(result, min_confidence=min_confidence)
     render_proposals(proposals, min_confidence, console)
 
     edits = build_edits(result.docs, result.sections, proposals, min_confidence)

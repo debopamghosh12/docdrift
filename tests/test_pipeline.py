@@ -2,7 +2,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from docdrift.models import ChangedFile, DocFile, PullRequestInfo
+from docdrift.models import ChangedFile, DocFile, PullRequestInfo, SourceFile
 from docdrift.pipeline import analyze_pull_request
 from docdrift.report import render_analysis
 
@@ -30,10 +30,14 @@ class FakeProvider:
         assert ref == "c" * 40
         return [DocFile(path="README.md", content="# Lib\n\n## Usage\n\nCall `connect(url)`.\n")]
 
+    def fetch_sources(self, repo_name: str, ref: str) -> list[SourceFile]:
+        return [SourceFile(path="lib/db.py", content="def open_connection(url):\n    return url\n")]
+
 
 def test_pipeline_end_to_end() -> None:
     result = analyze_pull_request(FakeProvider(), "me/lib", 7)
     assert [s.name for s in result.changeset.symbols] == ["open_connection"]
+    assert "open_connection" in result.code.functions
     assert [c.section.heading for c in result.candidates] == ["Usage"]
     # The old name is documented and that section is a candidate, so it's not "missing".
     assert result.missing == []

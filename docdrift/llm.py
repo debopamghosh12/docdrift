@@ -55,7 +55,12 @@ class JsonLLM:
         )
 
     def complete(
-        self, system: str, user: str, schema: type[M], check: Check[M] | None = None
+        self,
+        system: str,
+        user: str,
+        schema: type[M],
+        check: Check[M] | None = None,
+        output_tokens: int = OUTPUT_TOKEN_ALLOWANCE,
     ) -> M:
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system},
@@ -63,7 +68,7 @@ class JsonLLM:
         ]
         error = ""
         for _ in range(self._retries + 1):
-            raw, error = self._call(messages)
+            raw, error = self._call(messages, output_tokens)
             if raw is not None:
                 try:
                     result = schema.model_validate_json(raw)
@@ -82,11 +87,11 @@ class JsonLLM:
             ]
         raise LLMError(f"invalid LLM output after {self._retries + 1} attempts: {error}")
 
-    def _call(self, messages: list[dict[str, str]]) -> tuple[str | None, str]:
+    def _call(self, messages: list[dict[str, str]], output_tokens: int) -> tuple[str | None, str]:
         prompt_chars = sum(len(m["content"]) for m in messages)
         ticket = None
         if self._limiter:
-            ticket = self._limiter.acquire(int(prompt_chars / CHARS_PER_TOKEN) + OUTPUT_TOKEN_ALLOWANCE)
+            ticket = self._limiter.acquire(int(prompt_chars / CHARS_PER_TOKEN) + output_tokens)
         extra: dict[str, Any] = {}
         if self._reasoning_effort:
             extra["reasoning_effort"] = self._reasoning_effort

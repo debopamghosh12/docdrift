@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from docdrift.analyzer import SectionVerdict
+from docdrift.proposals import SectionVerdict
 from docdrift.llm import JsonLLM, LLMError
 from docdrift.prompts import render_prompt
 from docdrift.rate_limit import TokenRateLimiter
@@ -84,7 +84,7 @@ def test_rate_limiter_waits_for_window() -> None:
 
 def test_prompts_render_with_name_placeholder() -> None:
     text = render_prompt(
-        "missing_doc", kind="route", name="PATCH /x", file="a.py", pr_title="t", changes="c",
+        "missing_doc", kind="route", name="PATCH /x", file="a.py", target_file="README.md", pr_title="t", changes="c",
         hunks="h", outline="o", example_location="l", example="e",
     )
     assert "`PATCH /x`" in text and "$" not in text.split("## Pull request")[0]

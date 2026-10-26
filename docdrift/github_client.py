@@ -1,15 +1,13 @@
-"""GitHub API wrapper: fetch merged PR diffs, file contents, and markdown docs."""
-
-import base64
-from concurrent.futures import ThreadPoolExecutor
+"""GitHub API wrapper: fetch merged PR diffs, file contents, docs and source snapshots."""
 
 from github import Auth, Github, GithubException
 from github.File import File
 from github.Repository import Repository
 
-from docdrift.diff_parser import is_source_path
+from docdrift.diff_parser import is_source_path, is_test_path
 from docdrift.doc_index import is_doc_path
-from docdrift.models import ChangedFile, DocFile, FileStatus, PullRequestInfo
+from docdrift.models import ChangedFile, DocFile, FileStatus, PullRequestInfo, SourceFile
+from docdrift.snapshot import download_snapshot
 
 _STATUS_MAP = {
     "added": FileStatus.ADDED,
@@ -24,11 +22,12 @@ class PullRequestNotMergedError(RuntimeError):
 
 
 class GitHubClient:
-    def __init__(self, token: str | None = None, max_docs: int = 200, workers: int = 8) -> None:
+    def __init__(self, token: str | None = None, max_docs: int = 200) -> None:
         self._gh = Github(auth=Auth.Token(token)) if token else Github()
+        self._token = token
         self._max_docs = max_docs
-        self._workers = workers
         self._repos: dict[str, Repository] = {}
+        self._snapshots: dict[tuple[str, str], dict[str, str]] = {}
 
     def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
         """Fetch a merged PR with patches and full before/after content for source files.
@@ -58,18 +57,24 @@ class GitHubClient:
 
     def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]:
         """Return README.md and docs/**/*.md at `ref`."""
-        repo = self._repo(repo_name)
-        tree = repo.get_git_tree(ref, recursive=True)
-        entries = [e for e in tree.tree if e.type == "blob" and is_doc_path(e.path)]
-        entries = sorted(entries, key=lambda e: e.path)[: self._max_docs]
+        files = self._snapshot(repo_name, ref)
+        docs = [DocFile(path=p, content=c) for p, c in sorted(files.items()) if is_doc_path(p)]
+        return docs[: self._max_docs]
 
-        def load(path: str, sha: str) -> DocFile:
-            blob = repo.get_git_blob(sha)
-            content = base64.b64decode(blob.content).decode("utf-8", errors="replace")
-            return DocFile(path=path, content=content)
+    def fetch_sources(self, repo_name: str, ref: str) -> list[SourceFile]:
+        """Return non-test source files at `ref`, used to verify generated docs."""
+        files = self._snapshot(repo_name, ref)
+        return [
+            SourceFile(path=p, content=c)
+            for p, c in sorted(files.items())
+            if is_source_path(p) and not is_test_path(p)
+        ]
 
-        with ThreadPoolExecutor(max_workers=self._workers) as pool:
-            return list(pool.map(load, [e.path for e in entries], [e.sha for e in entries]))
+    def _snapshot(self, repo_name: str, ref: str) -> dict[str, str]:
+        key = (repo_name, ref)
+        if key not in self._snapshots:
+            self._snapshots[key] = download_snapshot(repo_name, ref, self._token)
+        return self._snapshots[key]
 
     def _repo(self, name: str) -> Repository:
         if name not in self._repos:

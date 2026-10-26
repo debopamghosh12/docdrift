@@ -28,7 +28,16 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `docdrift/doc_index.py` — split markdown docs into heading-delimited sections
 - `docdrift/candidates.py` — score sections against the ChangeSet; flag missing docs
 - `docdrift/report.py` — rich terminal tables
-- `docdrift/analyzer.py` — LLM: verdict per candidate section (stale/confidence/reason/updated_section); drafts + places new sections for missing docs
+- `docdrift/analyzer.py` — orchestrates: batched reviews -> verify -> one retry with failures -> verified/fixed-on-retry/dropped; missing docs per covering file
+- `docdrift/reviewer.py` — LLM calls: batched section review (per file), verification retry, new-section drafts
+- `docdrift/proposals.py` — pydantic models for LLM replies, verification status, proposals
+- `docdrift/placement.py` — which doc files cover a missing item's kind
+- `docdrift/verifier.py` — deterministic checks vs. code at merge commit (signatures, symbols, routes, python blocks, minimal diff)
+- `docdrift/code_index.py` — facts from all source files (functions+effective defaults, classes, names, constants, env vars, flags, routes)
+- `docdrift/doc_mentions.py` — claims extracted from markdown (signatures, calls, classes, constants, flags, routes, code blocks)
+- `docdrift/minimal_diff.py` — restore whitespace/table-padding/look-alike churn; unrelated-change ratio
+- `docdrift/snapshot.py` — repo tarball at a ref (docs + sources) in one request
+- `docdrift/normalize.py` — heading normalization
 - `docdrift/llm.py` — JSON-mode OpenAI-compatible client; pydantic validation; one retry with the error appended
 - `docdrift/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
 - `docdrift/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section

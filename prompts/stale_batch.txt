@@ -1,0 +1,23 @@
+A pull request was merged. For each documentation section below (all from $file), decide whether it is now stale, and if it is, rewrite it.
+
+## Pull request
+$pr_title
+
+## Summary of code changes
+$changes
+
+## Relevant diff hunks
+$hunks
+
+## Documentation sections
+$sections
+
+Instructions:
+- Judge each section independently. A section is stale only if the code change makes something in it wrong, or makes a list or table in it incomplete (for example, a table of all environment variables or query parameters that is now missing a newly added one).
+- If a section is stale, its "updated_section" is the complete corrected section in Markdown, starting with its heading line. Keep every unaffected line identical. Change the heading only if the heading itself is now wrong.
+- If a section is not stale, its "updated_section" is null.
+- "reason" is one or two sentences: what changed in the code and what you changed in the docs (or why nothing needs to change).
+- "confidence" is your confidence in that section's verdict, from 0 to 1.
+
+Reply with a JSON object containing exactly one entry per section id ($ids):
+{"sections": [{"id": "s1", "stale": true or false, "confidence": number from 0 to 1, "reason": "string", "updated_section": "string or null"}]}

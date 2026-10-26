@@ -1,0 +1,11 @@
+
+## Your previous attempt
+<previous>
+$previous
+</previous>
+
+## Verification failures
+Your previous attempt was checked against the actual code at the merge commit and failed these checks:
+$failures
+
+Fix exactly these problems and change nothing else. If you are unsure of a value, keep the original documentation's wording for it instead of guessing. Reply with the same JSON shape as before.

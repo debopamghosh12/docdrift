@@ -42,6 +42,11 @@ class DocFile(BaseModel):
     content: str
 
 
+class SourceFile(BaseModel):
+    path: str
+    content: str
+
+
 class ChangeKind(str, Enum):
     ADDED = "added"
     REMOVED = "removed"

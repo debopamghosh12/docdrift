@@ -1,4 +1,4 @@
-A pull request was merged that adds a new $kind which is not documented anywhere: `$name` (defined in $file).
+A pull request was merged that adds a new $kind which is not documented in $target_file: `$name` (defined in $file).
 
 ## Pull request
 $pr_title
@@ -9,21 +9,21 @@ $changes
 ## Relevant diff hunks
 $hunks
 
-## Documentation outline (file, then its headings)
+## Outline of $target_file
 $outline
 
-## The existing section most related to this change ($example_location)
+## The existing section of $target_file most related to this change ($example_location)
 <section>
 $example
 </section>
 
-Write a new documentation section for `$name` and choose where it belongs.
+Write a new section of $target_file documenting `$name`, and choose where in that file it belongs.
 
 Instructions:
 - Document `$name` itself, as the $kind it is. For a function, document its parameters, return value and errors; do not document an HTTP endpoint that happens to call it.
-- Place it next to the existing docs for its siblings from $file (the related section above is usually the right neighbourhood).
-- "file" must be one of the files listed in the outline.
-- "after_heading" must be the exact text of an existing heading in that file, copied from the outline without the leading "#" characters. The new section is inserted after that heading's section and all of its subsections. Use null to append to the end of the file.
+- Place it next to the existing docs for its siblings (the related section above is usually the right neighbourhood).
+- "file" must be exactly "$target_file".
+- "after_heading" must be the exact text of an existing heading in $target_file, copied from the outline without the leading "#" characters. The new section is inserted after that heading's section and all of its subsections. Use null to append to the end of the file.
 - "section" is the complete Markdown for the new section, including its heading. Match the heading level, structure, tone and formatting of the neighbouring sections (for example, if sibling endpoints show a curl example and responses, do the same).
 - Document only facts visible in the diff, the change summary, or the existing documentation. Do not invent defaults, limits, status codes or messages.
 - "reason" is one sentence explaining what you documented and why it goes there.

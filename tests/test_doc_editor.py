@@ -1,13 +1,17 @@
-from docdrift.analyzer import (
+from docdrift.doc_editor import apply_edits, build_edits, unified_diff
+from docdrift.doc_index import index_document
+from docdrift.models import DocFile, MissingDoc
+from docdrift.proposals import (
     DocProposals,
     Insertion,
     NewSectionProposal,
     SectionVerdict,
     StaleFinding,
+    Verification,
+    VerificationStatus,
 )
-from docdrift.doc_editor import apply_edits, build_edits, unified_diff
-from docdrift.doc_index import index_document
-from docdrift.models import DocFile, MissingDoc
+
+VERIFIED = Verification(status=VerificationStatus.VERIFIED)
 
 DOC = DocFile(
     path="README.md",
@@ -18,14 +22,15 @@ DOC = DocFile(
 def finding(heading: str, updated: str | None, confidence: float = 0.9) -> StaleFinding:
     section = next(s for s in index_document(DOC) if s.heading == heading)
     verdict = SectionVerdict(stale=updated is not None, confidence=confidence, reason="r", updated_section=updated)
-    return StaleFinding(section=section, matched_terms=[], verdict=verdict)
+    return StaleFinding(section=section, matched_terms=[], verdict=verdict, verification=VERIFIED)
 
 
 def insertion(after: str | None, confidence: float = 0.9) -> Insertion:
     proposal = NewSectionProposal(
         file="README.md", after_heading=after, section="### `PATCH /a`\n\nPatch a.", reason="r", confidence=confidence
     )
-    return Insertion(item=MissingDoc(kind="route", name="PATCH /a", file="main.py"), proposal=proposal)
+    item = MissingDoc(kind="route", name="PATCH /a", file="main.py")
+    return Insertion(item=item, proposal=proposal, verification=VERIFIED)
 
 
 def apply(proposals: DocProposals, min_confidence: float = 0.5) -> str:
@@ -68,6 +73,14 @@ def test_low_confidence_and_non_stale_are_ignored() -> None:
         insertions=[insertion("Endpoints", confidence=0.1)],
     )
     assert apply(proposals) == DOC.content
+
+
+def test_dropped_and_unverified_changes_are_not_applied() -> None:
+    dropped = finding("Config", "## Config\n\nchanged")
+    dropped.verification = Verification(status=VerificationStatus.DROPPED, failures=["x"])
+    unverified = insertion("Endpoints")
+    unverified.verification = None
+    assert apply(DocProposals(findings=[dropped], insertions=[unverified])) == DOC.content
 
 
 def test_unified_diff_format() -> None:

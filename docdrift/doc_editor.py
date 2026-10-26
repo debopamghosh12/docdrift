@@ -3,8 +3,9 @@
 import difflib
 from dataclasses import dataclass
 
-from docdrift.analyzer import DocProposals, normalize_heading
 from docdrift.models import DocFile, DocSection
+from docdrift.normalize import normalize_heading
+from docdrift.proposals import DocProposals, Verification
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,11 @@ def build_edits(
     for finding in proposals.findings:
         verdict = finding.verdict
         if verdict.stale and verdict.updated_section and verdict.confidence >= min_confidence:
-            edits.append(_replacement(finding.section, verdict.updated_section))
+            if _trusted(finding.verification):
+                edits.append(_replacement(finding.section, verdict.updated_section))
     for insertion in proposals.insertions:
         proposal = insertion.proposal
-        if proposal.confidence < min_confidence:
+        if proposal.confidence < min_confidence or not _trusted(insertion.verification):
             continue
         file_sections = [s for s in sections if s.path == proposal.file]
         lines = contents[proposal.file]
@@ -58,6 +60,11 @@ def apply_edits(docs: list[DocFile], edits: list[Edit]) -> dict[str, str]:
         if new_content != doc.content:
             updated[doc.path] = new_content
     return updated
+
+
+def _trusted(verification: Verification | None) -> bool:
+    """Only verified (or fixed-on-retry) changes are applied."""
+    return verification is not None and verification.applied
 
 
 def unified_diff(path: str, old: str, new: str) -> str:
