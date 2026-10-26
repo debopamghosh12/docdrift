@@ -19,23 +19,40 @@ Docs rot silently. Every merged PR can rename a flag, change a default, or remov
 
 It also runs **before** the merge: on every push to an open PR it posts one comment with the stale sections, the proposed diff and the executed examples, sets a `Driftless / docs-in-sync` commit status, and commits the fixes to the PR's branch when someone replies `/driftless apply` (see [Pre-merge checks](#pre-merge-checks)).
 
-## Setup
+Run it however suits you: as a CLI (`pip install`, see [Install](#install)), as a [GitHub Action](#use-as-a-github-action) with nothing to host, or as an always-on [webhook server](#running-as-a-github-webhook) with a [web app](#web-app).
 
-Requires Python 3.11.
+## Install
+
+Requires Python 3.11 or newer. Driftless is a normal Python package with a `driftless` command:
+
+```bash
+pip install git+https://github.com/debopamghosh12/driftless.git
+# or, isolated from your other tools:
+pipx install git+https://github.com/debopamghosh12/driftless.git
+```
+
+Then, in the folder you'll run it from:
+
+```bash
+driftless init                                  # asks for GITHUB_TOKEN and LLM_API_KEY, writes ./.env
+driftless doctor --repo owner/name              # checks everything, prints ✅/❌ and how to fix each
+driftless check --repo owner/name               # first run: audit every example in the repo's docs
+```
+
+- **Two secrets, nothing else.** `GITHUB_TOKEN` (a token with access to your repos) and `LLM_API_KEY`. The LLM endpoint defaults to Groq (`LLM_BASE_URL=https://api.groq.com/openai/v1`, `LLM_MODEL=openai/gpt-oss-120b`); point both at any OpenAI-compatible endpoint to change it. Settings come from environment variables or a `.env` in the current folder ([`.env.example`](.env.example) lists them all).
+- **`driftless init`** asks for both secrets with hidden input and writes them to `./.env`. An existing `.env` is updated in place, other lines are kept, and pressing Enter keeps a value that's already there. It warns if `.env` isn't gitignored. Never commit it.
+- **`driftless doctor [--repo owner/name]`** checks the Python version, that the secrets are set (never printing them), that the LLM endpoint answers and serves `LLM_MODEL`, and, with `--repo`, what the token may do there: read contents, and write contents, pull requests, issues and commit statuses (plus reading webhooks, optional). Write access is probed without changing anything: each probe POSTs an empty body, which GitHub rejects with 422 when the token is allowed and 403/404 when it isn't. Every ❌ says how to grant it for a fine-grained token, a classic token, and a workflow's `permissions:`. It exits 1 if a required check fails.
+
+### Development
 
 ```bash
 # create and activate the virtualenv (Git Bash on Windows)
 py -3.11 -m venv .venv
 source .venv/Scripts/activate
 
-# install
 pip install -e ".[dev]"
-
-# configure
 cp .env.example .env   # then fill in GITHUB_TOKEN, WEBHOOK_SECRET, LLM_API_KEY
-
-# check
-python -m driftless.cli --help
+driftless --help
 pytest
 ```
 
@@ -126,7 +143,7 @@ The token needs **Commit statuses: write**, **Pull requests: write** and **Conte
 
 ## Memory
 
-Driftless learns per repo. Everything lives in one SQLite file (`DATABASE_URL`, default `sqlite:///driftless.db`) and is keyed by `owner/name`, so nothing leaks between repos.
+Driftless learns per repo. (As a GitHub Action, the rules live in [`.driftless.yml`](#configuration-driftlessyml) instead.) Everything lives in one SQLite file (`DATABASE_URL`, default `sqlite:///driftless.db`) and is keyed by `owner/name`, so nothing leaks between repos.
 
 **Commands.** Comment on any PR of the watched repo. Like `/driftless apply`, every command needs write access (checked with the collaborator-permission API) and gets a short reply:
 
@@ -147,6 +164,57 @@ The command goes on the comment's first line. Quotes or backticks around the arg
 - **Feedback.** When Driftless opens or updates a docs PR, it saves the PR's changes (each rewritten or added section with a short diff and the model's reason, plus fixed examples). When that docs PR is **merged**, they are stored as accepted; when it's **closed without merging**, as rejected. The 3 most recent rejected changes go into the prompts under *Changes the maintainers rejected before*, telling the model not to propose the same kind of change again unless the code clearly requires it.
 - **🧠 Remembered for this repo.** When an ignore rule kept something out of a run, or the model was given style preferences or rejected changes, the pre-merge comment, the docs PR body and the in-sync comment say so in one line, e.g. *🧠 Remembered for this repo: applied 1 ignore rule (`CHANGELOG.md`) · followed 2 style preferences.* An ignore rule only counts as applied if it removed a section that would otherwise have been reviewed, or a file with examples.
 - **Job history.** Every webhook job is saved on each state change, so `GET /runs` survives restarts. Jobs a previous process left queued or running are marked `failed` with *interrupted: the server restarted before this job finished*.
+
+## Use as a GitHub Action
+
+Any repo can run Driftless in its own GitHub Actions, with nothing to host: no server, no webhook, no database.
+
+1. **Copy the workflow.** Save [`examples/driftless-workflow.yml`](examples/driftless-workflow.yml) as `.github/workflows/driftless.yml` in your repo. It uses `debopamghosh12/driftless@v1`, triggers on pull requests, PR comments, a manual dispatch and a weekly schedule, and grants `contents`, `pull-requests`, `issues` and `statuses` write.
+2. **Add the LLM key as a secret.** Get a Groq API key at <https://console.groq.com/keys>, then in your repo: **Settings → Secrets and variables → Actions → New repository secret**, name `GROQ_API_KEY`. The workflow's own `GITHUB_TOKEN` is used for GitHub, so no other secret is needed.
+3. **Let it open PRs.** **Settings → Actions → General → Workflow permissions →** tick *Allow GitHub Actions to create and approve pull requests*, so the post-merge docs PR (and `fix` audits) can be opened.
+4. **Optional: block merging stale docs.** Under branch protection, make `Driftless / docs-in-sync` (the commit status) or the workflow's job a required check.
+
+What runs on each event (the same routing as the webhook server, in `driftless/events.py`):
+
+| Event | What Driftless does |
+|-------|---------------------|
+| `pull_request` opened / synchronize / reopened / ready_for_review | [Pre-merge check](#pre-merge-checks): one PR comment, edited in place, and the `Driftless / docs-in-sync` status. With `fail-on-drift` (default) the job fails too when there is drift. Drafts and PRs from forks are skipped (fork PRs get no secrets and a read-only token). |
+| `issue_comment` `/driftless apply` | Commits the fixes to the PR's branch. Pushes made with `GITHUB_TOKEN` start no new workflow runs, so the same job then re-checks the new head and updates the comment and status. |
+| `issue_comment` `/driftless ignore`, `unignore`, `style`, `unstyle`, `memory` | Replies with the exact `.driftless.yml` change to make (see below), because a runner forgets everything when the job ends. |
+| `pull_request` closed + merged | Post-merge sync: opens or updates the docs PR, or comments that the docs are in sync. |
+| `workflow_dispatch` / `schedule` | [Docs health audit](#docs-health-audit) of the ref (`driftless check`). With the `fix` input, broken examples are fixed and a PR is opened. |
+
+Inputs of the action:
+
+| Input | Default | |
+|-------|---------|---|
+| `llm-api-key` | (required) | API key for the LLM endpoint, e.g. `${{ secrets.GROQ_API_KEY }}`. |
+| `llm-base-url` | `https://api.groq.com/openai/v1` | Any OpenAI-compatible endpoint. |
+| `llm-model` | `openai/gpt-oss-120b` | |
+| `github-token` | `${{ github.token }}` | Needs the four write permissions above. |
+| `fail-on-drift` | `true` | Exit 1 when a pre-merge check or audit finds drift, so the job can block merges. |
+| `fix` | `false` | Audits: fix broken examples and open a PR. |
+| `execute-examples` | `true` | Run the documented examples against the app. This runs the repo's code on the runner. |
+| `python-version` | `3.11` | |
+
+Outputs: `result` (what ran), `check-state` (`success`, `failure` or `error`) and `url` (the comment, PR or commit). Each run also writes a line to the job summary. `driftless action` is the command behind it: it reads `GITHUB_EVENT_NAME` and the payload at `GITHUB_EVENT_PATH`, so it can be tried locally with a saved payload.
+
+## Configuration (.driftless.yml)
+
+In Action mode, a repo's [memory](#memory) is a file instead of a database. Put `.driftless.yml` at the repo root:
+
+```yaml
+ignore:            # never review or rewrite these, and don't run their examples
+  - CHANGELOG.md   # a file
+  - docs/legacy/   # a folder
+  - docs/*.md      # a glob
+  - Legacy API     # a heading (case-insensitive), with its subsections
+style:             # given to the model with every rewrite
+  - Use British spelling.
+  - Keep examples minimal.
+```
+
+Both keys are optional, and the rules mean the same as `/driftless ignore` and `/driftless style`. The file is read from the **default branch**, so a PR can't loosen the rules it's checked against. A malformed file fails the run with a message saying what's wrong. Commenting `/driftless ignore CHANGELOG.md` on a PR still works: Driftless replies with the whole file as it should read, the new line marked `# new`, ready to commit. Docs-PR feedback (accepted/rejected changes) isn't kept in Action mode, since nothing persists between runs. The webhook server (`driftless serve`) keeps using SQLite and the PR-comment commands.
 
 ## Web app
 
@@ -203,3 +271,7 @@ Long runs are always background jobs in the webhook's job store, so a request ne
 - **2026-10-26 — Memory: per-repo rules from PR comments, feedback from docs PR outcomes, jobs in SQLite.** Maintainers teach Driftless with PR comments (`/driftless ignore|unignore|style|unstyle|memory`) instead of a config file, because the moment someone wants Driftless to stop touching `CHANGELOG.md` is when they're looking at a Driftless comment. The commands go through the same write-access check as `/driftless apply`, since a style note ends up in every prompt. Each comment is its own job lane (keyed by comment id), so two commands never dedupe each other but a redelivered one does. Ignore rules are applied *before* candidate scoring, deterministically, not as a prompt instruction: an ignored section can't be rewritten even if the model disagrees. A rule is reported as applied only when it removed a section that top-k scoring would otherwise have kept, or a file with examples, so the 🧠 line isn't noise on every run. For feedback we save the proposed changes when the docs PR is opened or updated, keyed by its number, and resolve them on the `closed` event of our own branch, rather than re-fetching the PR's diff later: by then the branch may be gone, and we want our own per-section reasons and diffs, not a whole-file patch. Only the 3 most recent rejected changes go into the prompt. They cost tokens on Groq's 8k-TPM free tier, and recent rejections are the ones that reflect current taste. Accepted changes are counted but not prompted, since "do more of what you already do" adds no signal. Jobs are now saved to the same SQLite file on every state change (replacing the in-memory-only registry above). Jobs left queued or running by a dead process are marked failed on startup instead of showing as running forever. Tests use in-memory SQLite (`sqlite://` with a `StaticPool`, shared across the server's threads).
 - **2026-10-26 — Happy paths stay happy: a fix may never turn a documented 2xx into an error.** On `driftless-demo` #7 (`MAX_BODY_LENGTH` default set to 2) `POST /notes` got a 422 and the fixer "fixed" it by documenting the 422. That example then passed, so the `GET`/`DELETE` 404s became the earliest failures and were "fixed" too: the docs PR turned three happy-path examples into error examples. Three deterministic rules now sit around the LLM, so they hold whatever the model replies. (1) A fix of an example that documents 2xx (or no status) must keep a 2xx. A downgrade is rejected before running, and the next attempt is told why, which steers it towards changing the request (a shorter body) instead. (2) A fix is kept only if the example passes when the file is re-run. A failing fix is thrown away, so the docs never get one that hasn't been seen to work. (3) A 404 on a resource whose create (`POST`/`PUT` on the same or a parent path) didn't return 2xx in this run is a certain knock-on. It is never sent to the fixer, and it's re-run only after the create is fixed. When no valid request succeeds, the example is ❌ *needs a human* with the model's reason, its docs are left unchanged, and the headline says so: "breaks 1 documented example (`POST /notes`): MAX_BODY_LENGTH=2 rejects the example body; needs a human. 2 later examples fail as a result." We enforce this in code rather than relying on the prompt alone (the prompt states the same rules) because the model has already ignored them once in a live run.
 - **2026-10-26 — Web app: server-rendered pages on the webhook server, the same jobs, an allow list.** People who don't use the CLI should get every feature, but a second service or a JavaScript build would double what can break during a demo. So `driftless.web` is Jinja2 templates with htmx and Tailwind from CDNs, mounted in `create_app` next to `/webhook`. It reuses the job store, the SQLite memory and the syncer rather than re-implementing anything. `driftless check`'s body moved into `audit.run_audit`, which both the CLI and the web call. The web adds three job modes (`check`, `fix-examples`, `analyze`). Jobs report a stage (`fetch`/`review`/`start`/`run`/`baseline`/`publish`) through an optional progress callback threaded through `analyze_and_propose` and `run_audit`, and keep their full result in memory for rendering. Pages poll `GET /jobs/{id}`, since a run takes seconds to minutes and polling every 1.5s needs no websocket. "Analyze" is a dry run of exactly what the pre-merge check or post-merge sync would publish. The next publish of that PR reuses it once, within 30 minutes, at the same head and with the same memory, because on Groq's free tier a second LLM pass costs minutes. Otherwise publishing re-runs the full pipeline, exactly as a webhook would. Because every action uses the server's token, the web app serves only `ALLOWED_REPOS`, and an empty list means none (fail closed, like the webhook secret). `/driftless apply` from the web runs as the token's account, so the existing write-access check still applies. Pages show whether a secret is set but never its value. Job errors are scrubbed of secret values, webhook payload URLs show only their host, autoescaping is on, and cross-origin form posts are refused. That last one matters because a POST here can run repo code. Live testing caught one bug the fakes didn't: PyGithub's `PaginatedList[:n]` raises `IndexError` when the list is shorter than `n`, so the PR list uses `islice`.
+- **2026-10-27 — Installable with `pip install git+https://...`: prompts and templates are package data.** The prompts lived in a top-level `prompts/` folder found via `Path(__file__).parent.parent`, which only exists in a source checkout, so an installed Driftless crashed on its first LLM call. They moved into the package (`driftless/prompts/*.txt`, beside the loader) and are read with `importlib.resources`; the web templates load through Jinja's `PackageLoader`. Both are declared as package data, and the install was verified in a fresh venv outside the repo (`--help`, `doctor`, `check` from another folder). The Groq endpoint and model were already the defaults, so a new user needs only `GITHUB_TOKEN` and `LLM_API_KEY`, which `driftless init` writes to `./.env` with hidden input.
+- **2026-10-27 — `driftless doctor` probes write permissions with empty POSTs.** Classic tokens list their scopes in `X-OAuth-Scopes`, but fine-grained tokens and an Actions `GITHUB_TOKEN` expose nothing, and the repo's `permissions` field describes the user, not the token. GitHub checks access before it validates a body, so an empty POST to an endpoint that needs a permission answers 422 if the token has it and 403/404 if not, and nothing is ever created. One probe works for all three token kinds. Webhooks are only probed with a GET, because a webhook created by mistake would be a real side effect.
+- **2026-10-27 — One event router for the webhook server and the GitHub Action.** `events.route_event` turns an event name and payload into a plan (pre-merge, post-merge, apply, memory, docs-PR feedback, audit, or ignored with a reason). The server queues jobs from it; `driftless action` runs the same plan inline in the workflow job. A PR comment or a draft means the same in both modes.
+- **2026-10-27 — Action mode: memory in `.driftless.yml`, re-check after apply, skip fork PRs.** A runner's SQLite is gone when the job ends, so ignore rules and style notes come from a YAML file, loaded into an in-memory `Memory` so the pipeline code is unchanged. It's read from the default branch so a PR can't exempt itself. `/driftless ignore|style ...` comments reply with the exact file content to commit instead of pretending to remember. Commits pushed with the workflow's `GITHUB_TOKEN` don't trigger workflows (GitHub's guard against loops), so after `/driftless apply` the same job checks the new head itself, and the comment and status still turn green. Workflows on fork PRs get neither secrets nor write access, so pre-merge checks skip them with a reason instead of failing. `fail-on-drift` makes the job itself fail, for repos that gate on job results rather than commit statuses. Applies and memory replies never fail the job, since they're not checks. The example workflow cancels a superseded check through `concurrency`, which is what the server's job store does in-process.

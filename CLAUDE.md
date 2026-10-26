@@ -43,7 +43,7 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/llm.py` — JSON-mode OpenAI-compatible client; pydantic validation; one retry with the error appended
 - `driftless/rate_limit.py` — sliding-window tokens-per-minute limiter (Groq free tier: 8000 TPM)
 - `driftless/evidence.py` — change summary, relevant hunks, doc outline, sibling-anchored example section
-- `driftless/prompts.py` — loads `prompts/*.txt` (`string.Template`, `$placeholders`)
+- `driftless/prompts/` — package: `__init__` loads its `*.txt` templates via `importlib.resources` (`string.Template`, `$placeholders`); shipped as package data
 - `driftless/doc_editor.py` — apply rewrites (line ranges) then insertions (after real content, matching `---` separators); unified diffs
 - `driftless/proposal_report.py` — rich tables for verdicts/insertions; colored diffs
 - `driftless/pr_writer.py` — `DocsRepo` protocol + `PRWriter`: one commit on `driftless/pr-<n>` (old `docdrift/` branches are still recognized as ours), open/update the docs PR idempotently, or comment "in sync" on the source PR
@@ -66,12 +66,17 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/premerge.py` — `CheckRepo` protocol + `PreMergeChecker`: one edited PR comment, `Driftless / docs-in-sync` commit status, `/driftless apply` (write access, same-repo branches only, fast-forward)
 - `driftless/premerge_body.py` — markdown for the pre-merge comment (stale table, collapsed diffs, examples) and apply replies
 - `driftless/jobs.py` — job registry: modes (pre-merge / post-merge / apply / memory; web: analyze / check / fix-examples with live stage + in-memory result), one active job per PR and lane (memory: per comment), newer pushes supersede running checks, persisted to SQLite via `JobLog` (unfinished jobs marked interrupted on startup), last 20 kept, logging
-- `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified; merged PRs -> post-merge job, opened/synchronize/reopened/ready_for_review -> pre-merge job, `/driftless apply` comments -> apply job, other `/driftless` commands -> memory job; 202; closed Driftless docs PRs -> accepted/rejected feedback), `GET /health`, `GET /runs` (from SQLite)
+- `driftless/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, routed by `events.route_event`; merged PRs -> post-merge job, opened/synchronize/reopened/ready_for_review -> pre-merge job, `/driftless apply` comments -> apply job, other `/driftless` commands -> memory job; 202; closed Driftless docs PRs -> accepted/rejected feedback), `GET /health`, `GET /runs` (from SQLite)
 - `driftless/progress.py` — `Stage` + `StageProgress` callback: what a long run is doing (shown live by the web app)
 - `driftless/audit.py` — docs health audit (`run_audit`, used by `driftless check` and the web): run examples at a ref, optionally fix + open the examples PR
 - `driftless/web/` — web app on the same server: `__init__.install_web` (routers, error pages), `access.py` (ALLOWED_REPOS, redaction), `state.py` (WebState, Jinja env/filters), `pages.py` (GET tabs: health/pulls/memory/activity/setup), `actions.py` (POST: check, PR analyze/premerge/apply/docs-pr, memory, webhook; job polling; same-origin check), `github_browser.py` (repo/docs/PRs/hooks reads, cached), `views.py` (reports -> template rows), `job_panel.py` (stages + result per job), `templates/` (Jinja2 + htmx + Tailwind CDN)
-- `driftless/cli.py` — typer CLI (`driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5] [--no-execute]`; without --dry-run opens the docs PR; `driftless check --repo owner/name [--ref main] [--fix]` audits every doc example; `driftless serve` starts the webhook server + web app on :8000)
-- `prompts/` — LLM prompt templates
+- `driftless/events.py` — pure event router (`route_event`): GitHub event + payload -> plan (pre-merge / post-merge / apply / memory / docs-PR feedback / audit / ignored); shared by server and Action
+- `driftless/action.py` — `driftless action` (GitHub Action mode): event from GITHUB_EVENT_NAME/PATH, `ActionRunner` runs the plan inline (re-check after apply, fork PRs skipped, fail-on-drift exit code), step outputs + job summary
+- `driftless/repo_config.py` — `.driftless.yml` (ignore/style) from the default branch -> in-memory `Memory`; Action-mode replies to memory commands (the exact YAML to commit)
+- `driftless/doctor.py` — `driftless doctor` checks (Python, secrets set, LLM answers, token permissions via empty-POST 422-vs-403 probes); never prints secrets
+- `driftless/init_env.py` — `driftless init`: merge GITHUB_TOKEN / LLM_API_KEY into ./.env, gitignore check
+- `action.yml` — composite GitHub Action (setup-python, pip install the action path, `driftless action`); `examples/driftless-workflow.yml` — copy-ready workflow
+- `driftless/cli.py` — typer CLI (`driftless init` / `driftless doctor [--repo]`; `driftless action` in GitHub Actions; `driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5] [--no-execute]`; without --dry-run opens the docs PR; `driftless check --repo owner/name [--ref main] [--fix]` audits every doc example; `driftless serve` starts the webhook server + web app on :8000)
 - `tests/` — pytest
 
 ## Environment
