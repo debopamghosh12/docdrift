@@ -47,6 +47,40 @@ docdrift run --repo debopamghosh12/docdrift-demo --pr 1 --dry-run  # only print 
 
 This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), the doc sections most likely to be stale, the LLM's verified rewrites and new sections, and a diff. Without `--dry-run` it then pushes one commit to `docdrift/pr-<n>` and opens (or updates) a PR titled `docs: sync docs with #<n> (...)`, printing its URL. If there is nothing to change, it comments on the source PR instead. `GITHUB_TOKEN` needs contents and pull-request write access.
 
+## Running as a GitHub webhook
+
+DocDrift can run always-on: every merged PR on a watched repo triggers the same sync as `docdrift run` (analyze, rewrite, verify, open/update the docs PR). For local development, [smee.io](https://smee.io) forwards GitHub's webhook deliveries to your machine (Windows + Git Bash with Node installed).
+
+1. **Set a webhook secret.** Put a random string in `.env` as `WEBHOOK_SECRET` (e.g. from `python -c "import secrets; print(secrets.token_hex(32))"`). `GITHUB_TOKEN` and `LLM_API_KEY` must be set too. Without a secret the server rejects every delivery.
+2. **Start the server** (terminal 1):
+   ```bash
+   source .venv/Scripts/activate
+   docdrift serve            # http://127.0.0.1:8000
+   ```
+3. **Create a smee channel.** Open <https://smee.io> and click **Start a new channel**; copy its URL (`https://smee.io/<id>`).
+4. **Forward the channel to the server** (terminal 2):
+   ```bash
+   npx smee-client --url https://smee.io/<id> --target http://localhost:8000/webhook
+   ```
+5. **Add the webhook on GitHub.** In the watched repo: **Settings → Webhooks → Add webhook**:
+   - **Payload URL:** your smee URL (`https://smee.io/<id>`)
+   - **Content type:** `application/json`
+   - **Secret:** the same value as `WEBHOOK_SECRET`
+   - **Which events?** *Let me select individual events* → tick **Pull requests** and **Issue comments** (untick *Pushes*)
+   - **Active:** checked → **Add webhook**
+6. **Check it.** GitHub sends a `ping` right away; the server log shows `POST /webhook 200`, and the webhook's *Recent Deliveries* tab shows a green tick. Merge a PR and watch the job:
+   ```bash
+   curl http://localhost:8000/runs     # last 20 jobs: status, timing, docs PR URL or error
+   curl http://localhost:8000/health
+   ```
+
+How the server behaves:
+
+- `POST /webhook` verifies `X-Hub-Signature-256` (HMAC-SHA256 of the raw body with `WEBHOOK_SECRET`) and returns **401** if it doesn't match.
+- `ping` returns `ok`. `pull_request` with `action=closed` and `merged=true` queues a background sync and returns **202** immediately. Unmerged PRs, PRs from `docdrift/` branches (DocDrift's own) and other events (issue comments are reserved for reviewer feedback) are acknowledged with `ignored`.
+- A source PR is never synced twice at the same time: a redelivery while its job is queued or running returns `already running` with the existing job.
+- Each job's start, finish, docs PR URL or error is logged; `GET /runs` keeps the last 20 jobs in memory (lost on restart).
+
 ## Decision log
 
 - **2026-10-26 — OpenAI-compatible LLM client (Groq, `openai/gpt-oss-120b`).** Using the `openai` SDK with a configurable base URL keeps us provider-agnostic; Groq gives fast inference. Because it's a reasoning model, all structured calls use `response_format={"type": "json_object"}` and are validated with pydantic.
@@ -73,3 +107,4 @@ This prints the PR's ChangeSet (changed symbols, env vars, routes, CLI flags), t
 - **2026-10-26 — Docs PRs are one commit on the default branch, rebuilt on every run.** `pr_writer` creates the tree and commit with the Git Data API (one commit regardless of file count), then creates or force-moves `docdrift/pr-<n>`. An open PR from that branch has its title and body edited, so reruns are idempotent and the PR always reflects the latest verified proposals. A file is only written if its content on the default branch still equals the merge-commit version DocDrift edited. Otherwise it is skipped and listed, so someone else's later edit is never silently reverted. With nothing to commit, DocDrift posts a comment on the source PR and edits that same comment on reruns (found by a hidden `<!-- docdrift:source-pr=N -->` marker). PRs from `docdrift/` branches are refused before any analysis, so DocDrift never loops on its own PRs.
 - **2026-10-26 — Section separators are structure, not content.** Trailing blank lines and `---` breaks are kept from the original section and stripped from the model's text. New sections go after the anchor's real content: before trailing "See ..." lines, blank lines and breaks. They copy the file's `---` style. Why: in a real run the model dropped one `---` and doubled another.
 - **2026-10-26 — Invented example values are a verifier failure, not just a prompt rule.** The prompt forbids them, but the model still wrote `NOTES_PAGE_SIZE=30`. A new check fails any `NAME=value` for a repo setting whose value is neither the code's default (`os.getenv("X", "20")` defaults are indexed) nor a value already in the original section. The usual retry then fixes it: live, `NOTES_PAGE_SIZE=10` became `=20` on retry.
+- **2026-10-26 — Webhook syncs run as in-process background jobs with an in-memory registry.** `POST /webhook` verifies the HMAC, then hands merged PRs to FastAPI `BackgroundTasks` and returns 202 at once, because a full sync takes minutes on Groq's free tier and GitHub times out deliveries after 10s. `jobs.JobStore` allows one queued/running job per repo+PR (a redelivery gets the existing job instead of a second LLM run), records status/timing/docs PR URL, and keeps the last 20 for `GET /runs`. No queue or worker process: one server and SQLite are enough for a hackathon demo, and syncs are idempotent, so a job lost on restart is fixed by redelivering the webhook. The server and CLI share the same steps (`sync.sync_pull_request` is the headless version); the app is built by a `create_app(settings, sync)` factory so tests inject a fake sync. A missing `WEBHOOK_SECRET` fails closed (every delivery is rejected).

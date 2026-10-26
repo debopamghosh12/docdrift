@@ -134,10 +134,13 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(8000, help="Bind port."),
 ) -> None:
-    """Start the webhook server."""
+    """Start the GitHub webhook server (POST /webhook, GET /health, GET /runs)."""
+    import logging
+
     import uvicorn
 
-    uvicorn.run("docdrift.server:app", host=host, port=port)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    uvicorn.run("docdrift.server:create_app", factory=True, host=host, port=port)
 
 
 if __name__ == "__main__":

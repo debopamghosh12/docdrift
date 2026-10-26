@@ -49,8 +49,10 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `docdrift/github_writer.py` — PyGithub implementation of `DocsRepo` (Git Data API commits, refs, PRs, comments)
 - `docdrift/memory.py` — SQLite memory of decisions & reviewer feedback
 - `docdrift/pipeline.py` — orchestrates the end-to-end run
-- `docdrift/server.py` — FastAPI webhook endpoint (HMAC-verified)
-- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR)
+- `docdrift/sync.py` — headless `sync_pull_request` (analyze -> propose/verify -> publish), used by the server
+- `docdrift/jobs.py` — in-memory job registry: one active job per repo+PR, last 20 kept, logging
+- `docdrift/server.py` — FastAPI `create_app()`: `POST /webhook` (HMAC-verified, merged PRs -> background job, 202), `GET /health`, `GET /runs`
+- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5]`; without --dry-run opens the docs PR; `docdrift serve` starts the webhook server on :8000)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 
