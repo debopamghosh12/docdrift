@@ -1,0 +1,29 @@
+{% extends "repo/layout.html" %}
+{% from "macros.html" import button, card_open %}
+{% from "partials/panels.html" import job_panel %}
+{% block tab %}
+{{ card_open("Docs health audit", "Runs every request example in the docs (`curl` in shell blocks, `http` blocks) against the repo's FastAPI app, started from the ref you pick — a fresh app per doc file, examples in document order. Same as `driftless check`.") }}
+  {% if execute_examples %}
+  <form class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end"
+        hx-post="/r/{{ repo.full_name }}/check" hx-target="#check-panel" hx-swap="innerHTML">
+    <div class="flex-1">
+      <label for="ref" class="block text-xs font-medium uppercase tracking-wider text-slate-500">Branch, tag or commit</label>
+      <input id="ref" name="ref" value="{{ repo.default_branch }}"
+             class="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-400/60">
+    </div>
+    {{ button("Run check") }}
+  </form>
+  {% else %}
+  <p class="mt-4 rounded-lg bg-amber-400/10 p-3 text-sm text-amber-200 ring-1 ring-amber-400/30">
+    Running examples is turned off on this instance (<code class="code">EXECUTE_EXAMPLES=false</code>).
+  </p>
+  {% endif %}
+  <p class="mt-4 text-xs leading-relaxed text-slate-500">
+    ⚠️ This runs the repository's code on this server: its <code class="code">requirements.txt</code> is installed into a cached venv and its app is started on 127.0.0.1 with credentials stripped from the environment, then killed. Only enable repos you trust.
+  </p>
+</section>
+
+<div id="check-panel">
+  {% if latest %}{{ job_panel(latest) }}{% endif %}
+</div>
+{% endblock %}

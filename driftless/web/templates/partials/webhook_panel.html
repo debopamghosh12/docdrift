@@ -1,0 +1,53 @@
+{% from "macros.html" import badge, button, card_open %}
+{{ card_open("GitHub webhook", "With a webhook, Driftless runs by itself: a pre-merge check on every push to an open PR, a docs PR after every merge, and `/driftless` commands from PR comments. Deliveries go to `POST /webhook` on this server.") }}
+  <div class="mt-4 flex items-center gap-2">
+    {% if connected %}{{ badge("✓ connected", "green") }}<span class="text-sm text-slate-400">A webhook delivers pull requests and issue comments as JSON.</span>
+    {% elif hooks_error %}{{ badge("unknown", "slate") }}<span class="text-sm text-slate-400">{{ hooks_error }}</span>
+    {% else %}{{ badge("not connected", "amber") }}<span class="text-sm text-slate-400">No active webhook delivers pull requests and issue comments as JSON.</span>{% endif %}
+  </div>
+
+  {% if hooks %}
+  <ul class="mt-4 space-y-2">
+    {% for hook in hooks %}
+    <li class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 text-sm ring-1 ring-white/5">
+      <span class="font-mono text-xs text-slate-300">{{ hook.host }}/…</span>
+      <span class="flex flex-wrap items-center gap-1">
+        {% for event in hook.events %}{{ badge(event, "slate") }}{% endfor %}
+        {{ badge("active" if hook.active else "inactive", "green" if hook.active else "slate") }}
+        {% if hook.for_driftless %}{{ badge("Driftless-ready", "cyan") }}{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="mt-2 text-xs text-slate-500">Only each payload URL's host is shown; the full URL can be a private forwarding channel.</p>
+  {% endif %}
+
+  {% if created %}
+  <p class="mt-4 rounded-lg bg-emerald-400/10 p-3 text-sm text-emerald-200 ring-1 ring-emerald-400/30">Webhook created (id {{ created.id }}) for <span class="font-mono">{{ created.host }}</span>. GitHub sends a <code class="code">ping</code> right away; check its Recent Deliveries for a green tick.</p>
+  {% endif %}
+  {% if error %}
+  <p class="mt-4 rounded-lg bg-rose-500/10 p-3 text-sm text-rose-200 ring-1 ring-rose-500/30">{{ error | redact | code }}</p>
+  {% endif %}
+
+  <form class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end" hx-post="/r/{{ repo.full_name }}/webhook" hx-target="#webhook-panel" hx-swap="innerHTML">
+    <div class="flex-1">
+      <label for="url" class="block text-xs font-medium uppercase tracking-wider text-slate-500">Public payload URL</label>
+      <input id="url" name="url" type="url" required placeholder="https://smee.io/<channel> or https://<your-host>/webhook"
+             class="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-400/60">
+    </div>
+    {{ button("Connect webhook") }}
+  </form>
+  <p class="mt-2 text-xs text-slate-500">Creates a webhook for <strong>Pull requests</strong> and <strong>Issue comments</strong>, JSON, signed with this server's <code class="code">WEBHOOK_SECRET</code>. The token needs <strong>Webhooks: read and write</strong>.</p>
+
+  <details class="mt-5 rounded-xl bg-black/20 p-4 ring-1 ring-white/5" {% if manual %}open{% endif %}>
+    <summary class="cursor-pointer text-sm font-semibold text-white">Manual setup (from the README)</summary>
+    <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-300">
+      <li><strong>Set a webhook secret.</strong> Put a random string in <code class="code">.env</code> as <code class="code">WEBHOOK_SECRET</code> (e.g. from <code class="code">python -c "import secrets; print(secrets.token_hex(32))"</code>). Without it the server rejects every delivery.</li>
+      <li><strong>Start the server:</strong> <code class="code">driftless serve</code> (http://127.0.0.1:8000).</li>
+      <li><strong>Create a smee channel</strong> at <a href="https://smee.io" target="_blank" rel="noopener" class="text-emerald-300 underline">smee.io</a> (<em>Start a new channel</em>) and copy its URL.</li>
+      <li><strong>Forward it to the server:</strong> <code class="code">npx smee-client --url https://smee.io/&lt;id&gt; --target http://localhost:8000/webhook</code></li>
+      <li><strong>Add the webhook on GitHub:</strong> <a href="https://github.com/{{ repo.full_name }}/settings/hooks/new" target="_blank" rel="noopener" class="text-emerald-300 underline">Settings → Webhooks → Add webhook</a>. Payload URL: your smee URL; Content type: <code class="code">application/json</code>; Secret: the same value as <code class="code">WEBHOOK_SECRET</code>; events: <em>Let me select individual events</em> → <strong>Pull requests</strong> and <strong>Issue comments</strong> (untick <em>Pushes</em>); Active.</li>
+      <li><strong>Check it.</strong> GitHub sends a <code class="code">ping</code> right away; the server log shows <code class="code">POST /webhook 200</code> and Recent Deliveries shows a green tick.</li>
+    </ol>
+  </details>
+</section>

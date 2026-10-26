@@ -1,0 +1,76 @@
+{% extends "repo/layout.html" %}
+{% from "macros.html" import badge, button, card_open, status_pill, mode_label, PR_TONE, ACTION_LABEL %}
+{% from "partials/panels.html" import job_panel %}
+{% block tab %}
+<div>
+  <a href="/r/{{ repo.full_name }}/pulls" class="text-sm text-slate-400 hover:text-white">← All pull requests</a>
+  <div class="mt-3 flex flex-wrap items-center gap-2">
+    {{ badge(pull.state, PR_TONE[pull.state]) }}
+    <h2 class="text-xl font-bold text-white">{{ pull.title }} <span class="font-normal text-slate-500">#{{ pull.number }}</span></h2>
+    <a href="{{ pull.url }}" target="_blank" rel="noopener" class="text-sm text-slate-400 hover:text-white">GitHub ↗</a>
+  </div>
+  <p class="mt-1 text-sm text-slate-500">by {{ pull.author }} · <span class="font-mono">{{ pull.head_ref }}</span> @ <span class="font-mono">{{ pull.head_sha[:7] }}</span>{% if not pull.same_repo %} · from a fork{% endif %}</p>
+</div>
+
+{% if pull.own %}
+{{ card_open("Driftless docs PR") }}
+  <p class="mt-2 text-sm text-slate-400">This is one of Driftless's own docs PRs. It is never analyzed (that would loop); when it is merged or closed, its changes are remembered as accepted or rejected (see Memory).</p>
+</section>
+{% elif pull.state == "closed" %}
+{{ card_open("Closed without merging") }}
+  <p class="mt-2 text-sm text-slate-400">There is nothing to sync for a PR that was closed without merging.</p>
+</section>
+{% else %}
+{{ card_open("Analyze (dry run)",
+   "Runs the same analysis as " ~ ("a pre-merge check, at the PR head" if pull.state == "open" else "the post-merge sync, at the merge commit") ~ ": finds stale sections, rewrites and verifies them, runs every doc example against the app. Nothing is posted to GitHub.") }}
+  <form class="mt-4" hx-post="/r/{{ repo.full_name }}/pulls/{{ pull.number }}/analyze" hx-target="#analysis-panel" hx-swap="innerHTML">
+    {{ button("Analyze") }}
+  </form>
+</section>
+<div id="analysis-panel">{% if analysis_job %}{{ job_panel(analysis_job) }}{% endif %}</div>
+
+{{ card_open("Publish") }}
+  <div class="mt-4 grid gap-4 {{ 'md:grid-cols-2' if pull.state == 'open' else '' }}">
+    {% if pull.state == "open" %}
+    <form class="rounded-xl bg-black/20 p-4 ring-1 ring-white/5" hx-post="/r/{{ repo.full_name }}/pulls/{{ pull.number }}/premerge" hx-target="#publish-panel" hx-swap="innerHTML">
+      <h3 class="font-semibold text-white">Post pre-merge check</h3>
+      <p class="mt-1 mb-3 text-sm text-slate-400">Posts (or edits) the one Driftless comment on this PR and sets the <code class="code">Driftless / docs-in-sync</code> status on <code class="code">{{ pull.head_sha[:7] }}</code>.</p>
+      {{ button("Post pre-merge check") }}
+    </form>
+    <form class="rounded-xl bg-black/20 p-4 ring-1 ring-white/5" hx-post="/r/{{ repo.full_name }}/pulls/{{ pull.number }}/apply" hx-target="#publish-panel" hx-swap="innerHTML">
+      <h3 class="font-semibold text-white">Apply fixes to branch</h3>
+      {% if pull.same_repo %}
+      <p class="mt-1 mb-3 text-sm text-slate-400">Like <code class="code">/driftless apply</code>: commits the verified doc fixes of this head's pre-merge check (running and posting one first if there is none) to <code class="code">{{ pull.head_ref }}</code>, fast-forward only. It acts as the token's account, which needs write access.</p>
+      {{ button("Apply fixes to branch", "secondary") }}
+      {% else %}
+      <p class="mt-1 text-sm text-slate-400">Not available: this PR's branch is in a fork, which Driftless can't push to.</p>
+      {% endif %}
+    </form>
+    {% else %}
+    <form class="rounded-xl bg-black/20 p-4 ring-1 ring-white/5" hx-post="/r/{{ repo.full_name }}/pulls/{{ pull.number }}/docs-pr" hx-target="#publish-panel" hx-swap="innerHTML">
+      <h3 class="font-semibold text-white">Open docs PR</h3>
+      <p class="mt-1 mb-3 text-sm text-slate-400">Like the post-merge webhook: commits the verified changes to <code class="code">driftless/pr-{{ pull.number }}</code> and opens (or updates) the docs PR. If nothing needs changing, it comments on #{{ pull.number }} that the docs are in sync instead.</p>
+      {{ button("Open docs PR") }}
+    </form>
+    {% endif %}
+  </div>
+</section>
+<div id="publish-panel"></div>
+{% endif %}
+
+{% if runs %}
+{{ card_open("Earlier runs for this PR") }}
+  <ul class="mt-3 divide-y divide-white/5 text-sm">
+    {% for job in runs %}
+    <li class="flex flex-wrap items-center justify-between gap-2 py-2">
+      <span class="text-slate-300">{{ mode_label(job) }} <span class="text-xs text-slate-500">{{ job.queued_at | ago }}</span></span>
+      <span class="flex items-center gap-2">
+        {% if job.docs_pr_url %}<a href="{{ job.docs_pr_url }}" target="_blank" rel="noopener" class="text-emerald-300 hover:text-emerald-200">{{ ACTION_LABEL.get(job.action, job.action) }} ↗</a>{% endif %}
+        {{ status_pill(job) }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

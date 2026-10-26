@@ -1,0 +1,203 @@
+{% from "macros.html" import badge, status_pill, mode_label, job_subject, button, ACTION_LABEL %}
+
+{# A background job: live stages while it runs (polled), then its result. #}
+{% macro job_panel(p, reused=false) %}
+{% set job = p.job %}
+<div id="job-{{ job.id }}" class="rounded-2xl border border-white/10 bg-white/[0.03] p-5 sm:p-6"
+     {% if p.active %}hx-get="/jobs/{{ job.id }}" hx-trigger="every 1500ms" hx-swap="outerHTML"{% endif %}>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-wrap items-center gap-2">
+      <h3 class="font-semibold text-white">{{ mode_label(job) }}</h3>
+      <span class="text-sm text-slate-400">{{ job_subject(job) }}</span>
+      {{ status_pill(job) }}
+    </div>
+    <div class="text-xs text-slate-500">
+      started {{ (job.started_at or job.queued_at) | ago }}{% if job.duration_s is not none %} · took {{ job.duration_s | duration }}{% endif %}
+    </div>
+  </div>
+  {% if reused %}<p class="mt-2 text-xs text-slate-400">This run was already in progress, so you're seeing it instead of a second one.</p>{% endif %}
+
+  {% if p.steps and job.status.value != "succeeded" %}
+  <ol class="mt-5 grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
+    {% for step in p.steps %}
+    <li class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm ring-1 ring-inset
+        {{ 'bg-emerald-400/10 text-emerald-200 ring-emerald-400/20' if step.state == 'done'
+           else ('bg-sky-400/10 text-sky-100 ring-sky-400/30' if step.state == 'current' else 'text-slate-500 ring-white/5') }}">
+      {% if step.state == "done" %}<span>✓</span>
+      {% elif step.state == "current" and p.active %}<span class="h-3 w-3 animate-spin rounded-full border-2 border-sky-300 border-t-transparent"></span>
+      {% elif step.state == "current" %}<span>✕</span>
+      {% else %}<span class="h-2 w-2 rounded-full bg-slate-600"></span>{% endif %}
+      {{ step.label }}
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+
+  {% if p.active %}
+  <p class="mt-4 flex items-center gap-2 text-sm text-slate-400">
+    {% if not p.steps %}<span class="h-3 w-3 animate-spin rounded-full border-2 border-sky-300 border-t-transparent"></span>{% endif %}
+    {% if job.detail %}{{ job.detail | redact | code }}
+    {% elif job.status.value == "queued" %}Queued…
+    {% elif not p.steps %}Running the same pipeline as the webhook: read the PR, review with the model, verify, run the examples, then publish. A dry run of this commit from the last 30 minutes is reused instead. This can take a few minutes on a rate-limited LLM.
+    {% else %}Working…{% endif %}
+  </p>
+  {% endif %}
+
+  {% if job.status.value in ("failed", "skipped", "superseded") and job.error %}
+  <p class="mt-4 rounded-lg bg-rose-500/10 p-3 font-mono text-xs text-rose-200 ring-1 ring-rose-500/30 break-words">{{ job.error | redact }}</p>
+  {% endif %}
+
+  {% if job.status.value == "succeeded" %}
+    {% if p.check %}{{ check_result(p.check, job) }}
+    {% elif p.analysis %}{{ analysis_result(p.analysis, job) }}
+    {% elif p.result_gone %}
+      <p class="mt-4 text-sm text-slate-400">{% if job.summary %}Result: <strong class="text-slate-200">{{ job.summary }}</strong>. {% endif %}The details of this run are no longer in memory (the server restarted, or newer runs replaced it). Run it again to see them.</p>
+      {% if job.docs_pr_url %}{{ published(job) }}{% endif %}
+    {% elif job.docs_pr_url %}{{ published(job) }}
+    {% endif %}
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro published(job) %}
+<a href="{{ job.docs_pr_url }}" target="_blank" rel="noopener"
+   class="mt-4 flex items-center justify-between gap-3 rounded-xl bg-emerald-400/10 p-4 ring-1 ring-emerald-400/30 hover:bg-emerald-400/15">
+  <span>
+    <span class="block font-semibold text-emerald-200">{{ ACTION_LABEL.get(job.action, job.action) }}</span>
+    <span class="block break-all font-mono text-xs text-emerald-100/70">{{ job.docs_pr_url }}</span>
+  </span>
+  <span class="flex items-center gap-2">
+    {% if job.check_state %}{{ badge("status: " ~ job.check_state, "green" if job.check_state == "success" else "red") }}{% endif %}
+    <span class="text-emerald-200">↗</span>
+  </span>
+</a>
+{% endmacro %}
+
+{% macro stat(value, label, tone="slate") %}
+<div class="rounded-xl bg-black/20 px-4 py-3 ring-1 ring-white/5">
+  <div class="text-2xl font-bold {{ {'green': 'text-emerald-300', 'cyan': 'text-cyan-300', 'red': 'text-rose-300', 'amber': 'text-amber-300'}.get(tone, 'text-white') }}">{{ value }}</div>
+  <div class="text-xs text-slate-500">{{ label }}</div>
+</div>
+{% endmacro %}
+
+{% macro examples_block(ex) %}
+<div class="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+  {{ stat(ex.passing ~ "/" ~ ex.total, "examples passing", "green" if ex.passing == ex.total else "slate") }}
+  {{ stat(ex.fixed, "🔁 fixed after running", "cyan") }}
+  {{ stat(ex.failing, "❌ still failing", "red" if ex.failing else "slate") }}
+  {{ stat(ex.dependent, "⛓️ only because of an earlier one", "amber" if ex.dependent else "slate") }}
+</div>
+<p class="mt-4 text-sm text-slate-300">{{ ex.headline | code }} {{ ex.consequence | code }}</p>
+{% if ex.app %}<p class="mt-1 text-xs text-slate-500">Run against <code class="code">{{ ex.app }}</code>, a fresh app per doc file.</p>{% endif %}
+{% for error in ex.errors %}
+<p class="mt-2 rounded-lg bg-amber-400/10 p-2 font-mono text-xs text-amber-200 ring-1 ring-amber-400/30 break-words">⚠️ {{ error | redact }}</p>
+{% endfor %}
+{% if ex.rows %}
+<div class="mt-4 overflow-x-auto rounded-xl ring-1 ring-white/10">
+  <table class="w-full min-w-[640px] text-left text-sm">
+    <thead class="bg-white/5 text-xs uppercase tracking-wider text-slate-400">
+      <tr><th class="px-3 py-2">File</th><th class="px-3 py-2">Example</th><th class="px-3 py-2 text-right">Expected</th><th class="px-3 py-2 text-right">Actual</th><th class="px-3 py-2">Result</th></tr>
+    </thead>
+    <tbody class="divide-y divide-white/5">
+      {% for row in ex.rows %}
+      <tr class="align-top">
+        <td class="px-3 py-2 font-mono text-xs text-slate-400">{{ row.file }}:{{ row.line }}</td>
+        <td class="px-3 py-2 font-mono text-xs text-slate-100">{{ row.label }}</td>
+        <td class="px-3 py-2 text-right font-mono text-xs">{% if row.expected_before %}<s class="text-slate-500">{{ row.expected_before }}</s> {% endif %}{{ row.expected }}</td>
+        <td class="px-3 py-2 text-right font-mono text-xs">{{ row.actual }}</td>
+        <td class="px-3 py-2">
+          {{ badge(row.result, row.tone) }}{% if row.pre_existing %} {{ badge("pre-existing", "slate") }}{% endif %}
+          {% for d in row.details %}<div class="mt-1 text-xs text-slate-400 break-words">{{ d | redact | code }}</div>{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro diffs_block(diffs, title) %}
+{% if diffs %}
+<h4 class="mt-6 text-sm font-semibold text-white">{{ title }}</h4>
+{% for d in diffs %}
+<details class="mt-2 overflow-hidden rounded-xl ring-1 ring-white/10" open>
+  <summary class="cursor-pointer bg-white/5 px-3 py-2 font-mono text-xs text-slate-300">{{ d.path }}</summary>
+  <pre class="overflow-x-auto bg-black/40 py-2 text-xs leading-5"><code>{% for line in d.lines %}<span class="block px-3 diff-{{ line.kind }}">{{ line.text or " " }}</span>{% endfor %}</code></pre>
+</details>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{% macro check_result(v, job) %}
+{{ examples_block(v.examples) }}
+{% if v.fix %}
+  {{ diffs_block(v.diffs, "Example fixes") }}
+  {% if job.docs_pr_url %}{{ published(job) }}
+  {% elif v.publish_note %}<p class="mt-4 text-sm text-slate-400">{{ v.publish_note }}</p>{% endif %}
+{% elif v.examples.failing %}
+<form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center" hx-post="/r/{{ job.repo }}/check" hx-target="#check-panel" hx-swap="innerHTML">
+  <input type="hidden" name="ref" value="{{ v.ref }}">
+  <input type="hidden" name="fix" value="true">
+  {{ button("Fix broken examples (open PR)") }}
+  <span class="text-xs text-slate-500">Same as <code class="code">driftless check --fix</code>: re-runs the examples, asks the model to fix the earliest failing one in each file, keeps a fix only if it passes when run, and opens one PR from <code class="code">driftless/fix-examples</code>.</span>
+</form>
+{% endif %}
+{% endmacro %}
+
+{% macro analysis_result(a, job) %}
+{% set tone = {"success": "green", "failure": "amber", "error": "red"}[a.state] %}
+<div class="mt-5 rounded-xl p-4 ring-1 ring-inset {{ {'green': 'bg-emerald-400/10 ring-emerald-400/30', 'amber': 'bg-amber-400/10 ring-amber-400/30', 'red': 'bg-rose-400/10 ring-rose-400/30'}[tone] }}">
+  <p class="font-semibold text-white">{{ {"success": "✅", "failure": "⚠️", "error": "❗"}[a.state] }} {{ a.headline | code }}</p>
+  <p class="mt-1 text-sm text-slate-300">
+    {% if a.pre_merge %}Commit status it would set: <strong>{{ a.state }}</strong>. Checked at the PR head <code class="code">{{ a.head_sha[:7] }}</code>.
+    {% else %}Checked at the merge commit <code class="code">{{ a.ref[:7] }}</code>.{% endif %}
+    {{ a.checked }}
+  </p>
+  {% if a.remembered %}<p class="mt-2 text-sm text-violet-200">{{ a.remembered | code }}</p>{% endif %}
+</div>
+
+{% for error in a.errors %}
+<p class="mt-3 rounded-lg bg-rose-500/10 p-2 font-mono text-xs text-rose-200 ring-1 ring-rose-500/30 break-words">LLM error: {{ error | redact }}</p>
+{% endfor %}
+
+<h4 class="mt-6 text-sm font-semibold text-white">Stale sections</h4>
+<p class="mt-1 text-xs text-slate-500">{{ a.reviewed }} candidate section{{ "" if a.reviewed == 1 else "s" }} reviewed by the model, {{ a.up_to_date }} judged up to date. Every rewrite is checked against the code; a change that fails twice is dropped.</p>
+{% if a.changes %}
+<div class="mt-3 overflow-x-auto rounded-xl ring-1 ring-white/10">
+  <table class="w-full min-w-[720px] text-left text-sm">
+    <thead class="bg-white/5 text-xs uppercase tracking-wider text-slate-400">
+      <tr><th class="px-3 py-2">File</th><th class="px-3 py-2">Section</th><th class="px-3 py-2">Change</th><th class="px-3 py-2">Why</th><th class="px-3 py-2 text-right">Conf.</th><th class="px-3 py-2">Verification</th></tr>
+    </thead>
+    <tbody class="divide-y divide-white/5">
+      {% for c in a.changes %}
+      <tr class="align-top">
+        <td class="px-3 py-2 font-mono text-xs text-slate-400">{{ c.file }}</td>
+        <td class="px-3 py-2 text-slate-100">{{ c.section }}{% if c.pre_existing %} {{ badge("pre-existing", "slate") }}{% endif %}</td>
+        <td class="px-3 py-2">{{ badge(c.change, "blue" if c.change == "updated" else "violet") }}</td>
+        <td class="px-3 py-2 text-xs text-slate-300">{{ c.why | code }}
+          {% if c.triggered_by %}<div class="mt-1 text-slate-500">Triggered by: {% for t in c.triggered_by %}<code class="code">{{ t }}</code> {% endfor %}</div>{% endif %}
+        </td>
+        <td class="px-3 py-2 text-right font-mono text-xs">{{ "%.2f" | format(c.confidence) }}</td>
+        <td class="px-3 py-2">{{ badge(c.verification, c.tone) }}
+          {% for n in c.notes %}<div class="mt-1 text-xs text-slate-400 break-words">{{ n | code }}</div>{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="mt-3 text-sm text-slate-400">No stale sections.</p>
+{% endif %}
+{% if a.covered %}<p class="mt-2 text-xs text-slate-500">Already covered by a rewrite: {{ a.covered | join(", ") }}.</p>{% endif %}
+
+{{ diffs_block(a.diffs, "Proposed doc diff") }}
+
+{% if a.examples %}
+<h4 class="mt-6 text-sm font-semibold text-white">🧪 Executed examples</h4>
+{{ examples_block(a.examples) }}
+{% endif %}
+
+<p class="mt-6 text-xs text-slate-500">This was a dry run: nothing was posted to GitHub. Publishing below within 30 minutes reuses it, as long as the PR's head and this repo's memory haven't changed.</p>
+{% endmacro %}

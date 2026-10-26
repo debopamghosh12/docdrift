@@ -11,6 +11,7 @@ from rich.console import Console
 from driftless import __version__
 
 if TYPE_CHECKING:
+    from driftless.audit import AuditResult
     from driftless.config import Settings
     from driftless.execution import ExecutionReport
     from driftless.github_client import GitHubClient
@@ -194,69 +195,35 @@ def check(
 
     Runs the repository's code locally; only use it on repositories you trust.
     """
-    from pathlib import Path
-
+    from driftless.audit import AuditConfigError, run_audit
     from driftless.config import get_settings
-    from driftless.executable_docs import execute_docs
     from driftless.execution_report import render_execution
-    from driftless.github_client import GitHubClient
 
     _force_utf8_stdout()
     console = Console()
     settings = get_settings()
-    if fix and not settings.github_token:
-        console.print("[red]GITHUB_TOKEN is required to open a PR with --fix.[/]")
-        raise typer.Exit(code=1)
-    fixer = None
-    if fix:
-        from driftless.example_fixer import ExampleFixer
-        from driftless.llm import JsonLLM, LLMError
-
+    with _exit_on_errors(console), console.status(f"Downloading {repo}@{ref}...") as status:
         try:
-            fixer = ExampleFixer(JsonLLM.from_settings(settings))
-        except LLMError as exc:
+            audit = run_audit(settings, repo, ref, fix, progress=lambda stage, detail: status.update(detail))
+        except AuditConfigError as exc:
             console.print(f"[red]{exc}[/]")
             raise typer.Exit(code=1) from exc
-
-    client = GitHubClient(settings.github_token or None)
-    with _exit_on_errors(console), console.status(f"Downloading {repo}@{ref}..."):
-        docs = client.fetch_docs(repo, ref)
-        files = client.fetch_files(repo, ref)
-    originals = {d.path: d.content for d in docs}
-    with console.status("Running the examples in the docs against the app...") as status:
-        report = execute_docs(
-            files, originals, fixer, Path(settings.sandbox_cache_dir), settings.sandbox_startup_timeout, status.update
-        )
+    report = audit.report
     render_execution(report, console, title=f"Docs health audit of {repo}@{ref}")
     if fix:
-        _render_example_fixes(originals, report, console)
-        _publish_example_fixes(client, settings, repo, ref, originals, report, console)
+        _render_example_fixes(audit.originals, report, console)
+        _print_published_fixes(audit, console)
     if report.failing or report.errors:
         raise typer.Exit(code=1)
 
 
-def _publish_example_fixes(
-    client: "GitHubClient",
-    settings: "Settings",
-    repo: str,
-    ref: str,
-    originals: dict[str, str],
-    report: "ExecutionReport",
-    console: Console,
-) -> None:
-    from driftless.github_writer import GitHubWriter
-    from driftless.pr_writer import PRWriter
-
-    if not report.fixed:
-        console.print("[dim]No examples were fixed, so no PR was opened.[/]")
-        return
-    with _exit_on_errors(console), console.status("Publishing..."):
-        published = PRWriter(GitHubWriter(settings.github_token)).publish_example_fixes(repo, ref, originals, report)
+def _print_published_fixes(audit: "AuditResult", console: Console) -> None:
+    published = audit.published
     if published is None:
-        console.print("[yellow]The fixed files changed on the default branch since this ref; no PR opened.[/]")
+        console.print(f"[yellow]{audit.publish_note}[/]")
         return
     for path in published.skipped_files:
-        console.print(f"[yellow]Skipped {path}: it changed on the default branch since {ref}.[/]")
+        console.print(f"[yellow]Skipped {path}: it changed on the default branch since {audit.ref}.[/]")
     console.print(f"[green]Examples PR {published.action.value} ({published.branch}):[/] {published.url}")
 
 
@@ -271,7 +238,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(8000, help="Bind port."),
 ) -> None:
-    """Start the GitHub webhook server (POST /webhook, GET /health, GET /runs)."""
+    """Start the webhook server and the web app (/, POST /webhook, GET /health, GET /runs)."""
     import logging
 
     import uvicorn

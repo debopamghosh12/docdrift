@@ -141,3 +141,32 @@ def test_pre_merge_reads_the_merge_base_for_pre_existing_drift(
     monkeypatch.setattr(driftless.sync, "analyze_and_propose", FakeAnalysis(gh, lambda head: proposals()))
     syncer().pre_merge(REPO, 7, HEAD, lambda: False)
     assert base.refs == ["a" * 40]  # the PR's merge base
+
+
+def test_a_dry_run_is_reused_once_and_only_for_the_same_commit_and_memory() -> None:
+    import time
+
+    from driftless.memory import Memory
+    from driftless.sync import ANALYSIS_TTL_S, PullAnalysis
+
+    memory = Memory("sqlite://")
+    syncer = GitHubSyncer(Settings(_env_file=None, database_url="sqlite://"), memory=memory)
+
+    def dry_run(age: float = 0.0, pre_merge: bool = True) -> PullAnalysis:
+        analysis = PullAnalysis(open_pr(), proposals(), 0.5, pre_merge, time.time() - age)
+        syncer._analyses[(REPO, 7)] = analysis
+        return analysis
+
+    fresh = dry_run()
+    assert syncer._take_analysis(REPO, 7, pre_merge=True, head_sha=HEAD) is fresh
+    assert syncer._take_analysis(REPO, 7, pre_merge=True, head_sha=HEAD) is None  # used once
+
+    dry_run()
+    assert syncer._take_analysis(REPO, 7, pre_merge=True, head_sha="f" * 40) is None  # the head moved
+    dry_run(age=ANALYSIS_TTL_S + 1)
+    assert syncer._take_analysis(REPO, 7, pre_merge=True, head_sha=HEAD) is None  # too old
+    dry_run(pre_merge=True)
+    assert syncer._take_analysis(REPO, 7, pre_merge=False) is None  # analyzed open, now merged
+    dry_run()
+    memory.add_ignore(REPO, "CHANGELOG.md", "web")
+    assert syncer._take_analysis(REPO, 7, pre_merge=True, head_sha=HEAD) is None  # memory changed

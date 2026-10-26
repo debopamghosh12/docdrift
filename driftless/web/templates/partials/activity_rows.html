@@ -1,0 +1,23 @@
+{% from "macros.html" import status_pill, mode_label, job_subject, ACTION_LABEL %}
+{% for job in jobs %}
+<tr class="align-top">
+  <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-400">{{ job.queued_at | ago }}</td>
+  <td class="px-4 py-2 text-slate-200">{{ mode_label(job) }}{% if job.requested_by %} <span class="text-xs text-slate-500">by {{ job.requested_by }}</span>{% endif %}</td>
+  <td class="px-4 py-2 text-slate-300">
+    {% if job.mode.value in ("check", "fix-examples") %}<span class="font-mono text-xs">{{ job.ref }}</span>
+    {% else %}<a href="/r/{{ repo.full_name }}/pulls/{{ job.pr }}" class="hover:text-white">#{{ job.pr }}</a>{% endif %}
+  </td>
+  <td class="px-4 py-2">{{ status_pill(job) }}</td>
+  <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-slate-400">{{ job.duration_s | duration }}</td>
+  <td class="px-4 py-2 text-xs">
+    {% if job.docs_pr_url %}<a href="{{ job.docs_pr_url }}" target="_blank" rel="noopener" class="text-emerald-300 hover:text-emerald-200">{{ ACTION_LABEL.get(job.action, job.action) }} ↗</a>{% endif %}
+    {% if job.check_state %}<span class="ml-1 text-slate-400">status: {{ job.check_state }}</span>{% endif %}
+    {% if job.summary %}<span class="text-slate-300">{{ job.summary }}</span>{% endif %}
+    {% if job.command %}<div class="font-mono text-slate-400">{{ job.command }}</div>{% endif %}
+    {% if job.detail and job.status.value == "running" %}<div class="text-slate-400">{{ job.detail | redact | code }}</div>{% endif %}
+    {% if job.error %}<div class="mt-1 break-words text-rose-300">{{ job.error | redact }}</div>{% endif %}
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">No runs for this repo yet.</td></tr>
+{% endfor %}

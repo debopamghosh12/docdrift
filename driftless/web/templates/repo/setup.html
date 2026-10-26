@@ -1,0 +1,18 @@
+{% extends "repo/layout.html" %}
+{% from "macros.html" import badge, card_open %}
+{% block tab %}
+{{ card_open("Server configuration", "Whether each setting is present on this server. Values are never shown.") }}
+  <ul class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+    {% for key, present in configured.items() %}
+    <li class="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2 ring-1 ring-white/5">
+      <code class="font-mono text-xs text-slate-300">{{ key }}</code>{{ badge("set" if present else "missing", "green" if present else "red") }}
+    </li>
+    {% endfor %}
+    <li class="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2 ring-1 ring-white/5">
+      <code class="font-mono text-xs text-slate-300">EXECUTE_EXAMPLES</code>{{ badge("on" if execute_examples else "off", "green" if execute_examples else "slate") }}
+    </li>
+  </ul>
+</section>
+
+<div id="webhook-panel">{% include "partials/webhook_panel.html" %}</div>
+{% endblock %}

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///driftless.db"
 
+    # Web app: repos it may act on with GITHUB_TOKEN, comma-separated `owner/name` or `owner/*`.
+    # Empty: none (the webhook is unaffected).
+    allowed_repos: str = ""
+
     # Executable docs: run documented examples against the app (runs the repo's code locally).
     execute_examples: bool = True
     sandbox_cache_dir: str = ".driftless_cache"

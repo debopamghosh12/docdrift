@@ -1,0 +1,66 @@
+{% from "macros.html" import button, card_open %}
+{% set base = "/r/" ~ repo.full_name ~ "/memory/" %}
+{% set target = 'hx-target="#memory-panel" hx-swap="innerHTML"' %}
+<div class="space-y-6">
+  {% if message %}
+  <p class="rounded-lg p-3 text-sm ring-1 {{ 'bg-emerald-400/10 text-emerald-200 ring-emerald-400/30' if ok else 'bg-amber-400/10 text-amber-200 ring-amber-400/30' }}">{{ message | code }}</p>
+  {% endif %}
+  <p class="text-sm text-slate-400">The same memory as the <code class="code">/driftless ignore|unignore|style|unstyle</code> PR comments: changes here apply to every run for <span class="font-mono text-slate-200">{{ repo.full_name }}</span>, from the web and from webhooks.</p>
+
+  <div class="grid gap-6 lg:grid-cols-2">
+    {{ card_open("Ignore rules", "A file (`CHANGELOG.md`), folder (`docs/legacy/`) or glob (`docs/*.md`) matches by path; anything else matches a heading and its subsections. Ignored sections are never reviewed or rewritten, and a matching file's examples aren't run.") }}
+      <ul class="mt-4 space-y-2">
+        {% for rule in ignore_rules %}
+        <li class="flex items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 ring-1 ring-white/5">
+          <code class="truncate font-mono text-sm text-slate-100">{{ rule }}</code>
+          <form hx-post="{{ base }}unignore" {{ target | safe }}>
+            <input type="hidden" name="value" value="{{ rule }}">
+            <button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>
+          </form>
+        </li>
+        {% else %}
+        <li class="text-sm text-slate-500">Nothing is ignored.</li>
+        {% endfor %}
+      </ul>
+      <form class="mt-4 flex gap-2" hx-post="{{ base }}ignore" {{ target | safe }}>
+        <input name="value" required maxlength="300" placeholder="CHANGELOG.md or Legacy API" aria-label="Ignore rule"
+               class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60">
+        {{ button("Add", "secondary") }}
+      </form>
+    </section>
+
+    {{ card_open("Style preferences", "Given to the model in every review, retry and new-section prompt as the maintainers' style preferences, e.g. `use British spelling`.") }}
+      <ol class="mt-4 space-y-2">
+        {% for note in style_notes %}
+        <li class="flex items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 ring-1 ring-white/5">
+          <span class="text-sm text-slate-100"><span class="mr-2 text-slate-500">{{ loop.index }}.</span>{{ note }}</span>
+          <form hx-post="{{ base }}unstyle" {{ target | safe }}>
+            <input type="hidden" name="value" value="{{ loop.index }}">
+            <button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>
+          </form>
+        </li>
+        {% else %}
+        <li class="text-sm text-slate-500">No style preferences.</li>
+        {% endfor %}
+      </ol>
+      <form class="mt-4 flex gap-2" hx-post="{{ base }}style" {{ target | safe }}>
+        <input name="value" required maxlength="300" placeholder="keep examples minimal" aria-label="Style preference"
+               class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60">
+        {{ button("Add", "secondary") }}
+      </form>
+    </section>
+  </div>
+
+  {{ card_open("Feedback from docs PRs", "When a docs PR Driftless opened is merged, its changes count as accepted; closed without merging, as rejected. The 3 most recent rejected changes go into the prompts as what not to do again.") }}
+    <div class="mt-4 grid grid-cols-2 gap-3 sm:max-w-sm">
+      <div class="rounded-xl bg-black/20 px-4 py-3 ring-1 ring-white/5"><div class="text-2xl font-bold text-emerald-300">{{ feedback.accepted }}</div><div class="text-xs text-slate-500">merged (accepted)</div></div>
+      <div class="rounded-xl bg-black/20 px-4 py-3 ring-1 ring-white/5"><div class="text-2xl font-bold text-rose-300">{{ feedback.rejected }}</div><div class="text-xs text-slate-500">closed (rejected)</div></div>
+    </div>
+    {% if rejected %}
+    <h3 class="mt-5 text-sm font-semibold text-white">Shown to the model as what not to do</h3>
+    <ul class="mt-2 space-y-1 text-sm text-slate-300">
+      {% for c in rejected %}<li><code class="code">{{ c.file }}</code> › {{ c.section }} <span class="text-slate-500">({{ c.kind }}, docs PR #{{ c.docs_pr }})</span></li>{% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+</div>

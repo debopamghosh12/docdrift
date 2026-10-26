@@ -1,0 +1,22 @@
+{% extends "repo/layout.html" %}
+{% block tab %}
+<section class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+  <div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-5 py-4">
+    <div>
+      <h2 class="text-lg font-semibold text-white">Activity</h2>
+      <p class="mt-1 text-sm text-slate-400">Every job for this repo, from webhooks and from this app, newest first. Saved in SQLite, so it survives restarts.</p>
+    </div>
+    <span class="flex items-center gap-2 text-xs text-slate-500"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"></span>auto-refreshing</span>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full min-w-[720px] text-left text-sm">
+      <thead class="bg-white/5 text-xs uppercase tracking-wider text-slate-400">
+        <tr><th class="px-4 py-2">When</th><th class="px-4 py-2">Mode</th><th class="px-4 py-2">PR / ref</th><th class="px-4 py-2">Status</th><th class="px-4 py-2 text-right">Duration</th><th class="px-4 py-2">Result</th></tr>
+      </thead>
+      <tbody class="divide-y divide-white/5" hx-get="/r/{{ repo.full_name }}/activity/rows" hx-trigger="every 3s" hx-swap="innerHTML">
+        {% include "partials/activity_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

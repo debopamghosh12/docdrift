@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "macros.html" import badge, status_pill, mode_label, job_subject %}
+{% block title %}{{ repo.full_name }} · Driftless{% endblock %}
+{% block content %}
+<div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+  <div class="min-w-0">
+    <div class="flex flex-wrap items-center gap-2">
+      <h1 class="truncate text-2xl sm:text-3xl font-bold tracking-tight text-white">
+        <a href="{{ repo.url }}" target="_blank" rel="noopener" class="hover:underline decoration-white/30 underline-offset-4">{{ repo.full_name }}</a>
+      </h1>
+      {{ badge(repo.default_branch, "slate", "font-mono") }}
+      {% if repo.private %}{{ badge("private", "amber") }}{% endif %}
+    </div>
+    {% if repo.description %}<p class="mt-2 text-slate-400">{{ repo.description }}</p>{% endif %}
+    <details class="group mt-3 text-sm">
+      <summary class="cursor-pointer list-none text-slate-400 hover:text-slate-200">
+        <span class="font-semibold text-slate-200">{{ docs | length }}</span> doc file{{ "" if docs | length == 1 else "s" }} found
+        <span class="text-slate-500">(README.md, docs/**/*.md)</span>
+        <span class="ml-1 text-slate-500 group-open:hidden">▸</span><span class="ml-1 hidden text-slate-500 group-open:inline">▾</span>
+      </summary>
+      <ul class="mt-2 flex flex-wrap gap-2">
+        {% for path in docs %}<li class="rounded-md bg-white/5 px-2 py-1 font-mono text-xs text-slate-300">{{ path }}</li>{% else %}<li class="text-slate-500">No README.md or docs/*.md on {{ repo.default_branch }}.</li>{% endfor %}
+      </ul>
+    </details>
+  </div>
+  <div class="w-full lg:w-80 shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Last runs</h2>
+      <a href="/r/{{ repo.full_name }}/activity" class="text-xs text-slate-400 hover:text-white">All →</a>
+    </div>
+    <ul class="mt-3 space-y-2 text-sm">
+      {% for job in last_runs %}
+      <li class="flex items-center justify-between gap-2">
+        <span class="truncate text-slate-300">{{ mode_label(job) }} <span class="text-slate-500">{{ job_subject(job) }}</span></span>
+        {{ status_pill(job) }}
+      </li>
+      {% else %}
+      <li class="text-slate-500">No runs yet.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<nav class="mt-8 -mx-4 overflow-x-auto px-4 border-b border-white/10">
+  <ul class="flex min-w-max gap-1">
+    {% for key, label in tabs %}
+    {% set href = "/r/" ~ repo.full_name ~ ("" if key == "health" else "/" ~ key) %}
+    <li>
+      <a href="{{ href }}" class="inline-block border-b-2 px-4 py-2.5 text-sm font-medium transition
+         {{ 'border-emerald-400 text-white' if key == tab else 'border-transparent text-slate-400 hover:text-slate-200' }}">{{ label }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+
+<div class="mt-6 space-y-6">
+  {% block tab %}{% endblock %}
+</div>
+{% endblock %}

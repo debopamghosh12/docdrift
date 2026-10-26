@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Driftless{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com/3.4.5"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: {
+      sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+      mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+    } } } };
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { background: radial-gradient(1200px 600px at 10% -10%, rgba(16,185,129,.10), transparent 60%),
+                       radial-gradient(900px 500px at 100% 0%, rgba(34,211,238,.08), transparent 60%), #070b12; }
+    .code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .85em; padding: .1em .35em;
+            border-radius: .3em; background: rgba(148,163,184,.12); color: #e2e8f0; }
+    .diff-add { background: rgba(16,185,129,.12); color: #a7f3d0; }
+    .diff-del { background: rgba(244,63,94,.12); color: #fecdd3; }
+    .diff-hunk { color: #67e8f9; }
+    .diff-meta { color: #94a3b8; font-weight: 600; }
+    .htmx-request .when-idle { display: none; }
+    .when-busy { display: none; }
+    .htmx-request .when-busy { display: inline; }
+  </style>
+</head>
+<body class="min-h-full text-slate-200 font-sans antialiased">
+  <header class="border-b border-white/5 bg-black/20 backdrop-blur sticky top-0 z-20">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+      <a href="/" class="flex items-center gap-2.5 font-bold tracking-tight text-white">
+        <span class="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 text-slate-950 text-sm font-black">D</span>
+        Driftless
+      </a>
+      <nav class="flex items-center gap-4 text-sm text-slate-400">
+        <a href="/" class="hover:text-white">Repos</a>
+        <a href="/runs" class="hidden sm:inline hover:text-white">/runs JSON</a>
+        <a href="/health" class="hidden sm:inline hover:text-white">/health</a>
+      </nav>
+    </div>
+  </header>
+  <main class="mx-auto max-w-6xl px-4 py-8 sm:py-10">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="mx-auto max-w-6xl px-4 pb-10 text-xs text-slate-500">
+    Driftless — docs that never drift. Every action here uses this server's GitHub token, for the repos it allows.
+  </footer>
+</body>
+</html>

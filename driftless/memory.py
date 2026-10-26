@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field as PydanticField
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Field, Session, SQLModel, col, create_engine, select
+from sqlmodel import Field, Session, SQLModel, col, create_engine, func, select
 
 from driftless.models import DocSection
 from driftless.normalize import normalize_heading
@@ -130,10 +130,18 @@ class Memory:
             session.merge(JobRecord(id=job_id, repo=repo, pr=pr, status=status, queued_at=queued_at, data=json.dumps(data)))
             session.commit()
 
-    def recent_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recent_jobs(self, limit: int = 20, repo: str | None = None) -> list[dict[str, Any]]:
+        query = select(JobRecord)
+        if repo is not None:
+            query = query.where(func.lower(JobRecord.repo) == _key(repo))
         with Session(self._engine) as session:
-            rows = session.exec(select(JobRecord).order_by(col(JobRecord.queued_at).desc()).limit(limit)).all()
+            rows = session.exec(query.order_by(col(JobRecord.queued_at).desc()).limit(limit)).all()
             return [json.loads(row.data) for row in rows]
+
+    def job(self, job_id: str) -> dict[str, Any] | None:
+        with Session(self._engine) as session:
+            row = session.get(JobRecord, job_id)
+            return json.loads(row.data) if row else None
 
     def interrupt_unfinished(self) -> int:
         """Jobs left queued or running by a previous process will never finish: mark them failed."""

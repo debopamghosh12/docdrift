@@ -233,7 +233,7 @@ def render_execution(report: ExecutionReport) -> list[str]:
         ]
         parts += [
             f"| `{o.file}` | `{_cell(o.label)}` (line {o.line}) | {_expected_status(o)} "
-            f"| {_status(o.final_actual_status)} | {_example_result(o)}{' (pre-existing)' if o.pre_existing else ''} |"
+            f"| {_status(o.final_actual_status)} | {example_result(o)}{' (pre-existing)' if o.pre_existing else ''} |"
             for o in report.outcomes
         ]
     if report.fixed:
@@ -293,7 +293,7 @@ def render_check_body(repo: str, ref: str, report: ExecutionReport, changed_file
     return "\n".join(parts)
 
 
-def _example_result(outcome: ExampleOutcome) -> str:
+def example_result(outcome: ExampleOutcome) -> str:
     if outcome.status == ExampleStatus.DEPENDENT and outcome.caused_by:
         return f"⛓️ failed only because of {_cell(outcome.caused_by)}"
     if outcome.needs_human:

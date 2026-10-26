@@ -8,6 +8,9 @@
   Driftless remembers for the repo.
 - `pull_request` closed on one of Driftless's own docs PRs: remember its changes as accepted
   (merged) or rejected (closed without merging).
+
+The same process serves the web app (`driftless.web`): every page and action for the repos on
+ALLOWED_REPOS, with long runs queued on the same job store.
 """
 
 import hashlib
@@ -24,6 +27,8 @@ from driftless.config import Settings, get_settings
 from driftless.jobs import Enqueued, Job, JobMode, JobStore, Syncer
 from driftless.memory import Memory
 from driftless.pipeline import is_own_branch
+from driftless.web import install_web
+from driftless.web.github_browser import RepoBrowser
 
 logger = logging.getLogger("driftless.server")
 
@@ -38,7 +43,12 @@ def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature.removeprefix("sha256="))
 
 
-def create_app(settings: Settings | None = None, syncer: Syncer | None = None, memory: Memory | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    syncer: Syncer | None = None,
+    memory: Memory | None = None,
+    browser: RepoBrowser | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
     memory = memory or Memory(settings.database_url)
     if syncer is None:
@@ -52,6 +62,7 @@ def create_app(settings: Settings | None = None, syncer: Syncer | None = None, m
     app = FastAPI(title="Driftless")
     app.state.jobs = store
     app.state.memory = memory
+    app.state.web = install_web(app, settings, store, memory, browser)
 
     @app.get("/health")
     def health() -> dict[str, str]:

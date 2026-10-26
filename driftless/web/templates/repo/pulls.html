@@ -1,0 +1,30 @@
+{% extends "repo/layout.html" %}
+{% from "macros.html" import badge, PR_TONE %}
+{% block tab %}
+<section class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+  <div class="border-b border-white/10 px-5 py-4">
+    <h2 class="text-lg font-semibold text-white">Pull requests</h2>
+    <p class="mt-1 text-sm text-slate-400">Recent open and merged PRs. Open one to analyze it (dry run), post a pre-merge check, apply fixes to its branch, or open a docs PR.</p>
+  </div>
+  <ul class="divide-y divide-white/5">
+    {% for pr in pulls %}
+    <li>
+      <a href="/r/{{ repo.full_name }}/pulls/{{ pr.number }}" class="flex flex-col gap-2 px-5 py-4 hover:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            {{ badge(pr.state, PR_TONE[pr.state]) }}
+            {% if pr.draft %}{{ badge("draft", "slate") }}{% endif %}
+            {% if pr.own %}{{ badge("Driftless docs PR", "cyan") }}{% endif %}
+            <span class="truncate font-medium text-white">{{ pr.title }}</span>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">#{{ pr.number }} by {{ pr.author }} · <span class="font-mono">{{ pr.head_ref }}</span>{% if not pr.same_repo %} (fork){% endif %}</p>
+        </div>
+        <span class="shrink-0 text-sm text-emerald-300">{{ "View →" if pr.own else "Analyze →" }}</span>
+      </a>
+    </li>
+    {% else %}
+    <li class="px-5 py-8 text-center text-slate-500">No open or merged pull requests.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}
