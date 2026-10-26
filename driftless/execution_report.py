@@ -39,7 +39,7 @@ def render_execution(report: ExecutionReport, console: Console, title: str = "Ex
 
 
 def _details(outcome: ExampleOutcome) -> str:
-    lines = [_LABELS[outcome.status]]
+    lines = ["[red]❌ needs a human[/]" if outcome.needs_human else _LABELS[outcome.status]]
     if outcome.status == ExampleStatus.FIXED:
         lines += [f"[dim]was: {escape(f)}[/]" for f in outcome.failures]
         lines += [f"[dim]fix: {escape(f)}[/]" for f in outcome.fixes]

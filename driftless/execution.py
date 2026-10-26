@@ -20,6 +20,11 @@ class ExampleFix(BaseModel):
         return self
 
 
+def is_success(status: int | None) -> bool:
+    """A 2xx status, or none documented (which the executor reads as "expect success")."""
+    return status is None or 200 <= status < 300
+
+
 class ExampleStatus(str, Enum):
     PASSED = "passed"
     FIXED = "fixed"  # failed, then passed after an LLM fix and a re-run
@@ -44,6 +49,10 @@ class ExampleOutcome(BaseModel):
     pre_existing: bool = False  # pre-merge: already failed at the PR's base commit
     caused_by: str | None = None  # dependent: the earlier example whose fix made it pass, "POST /notes (line 12)"
     blocked_by: str | None = None  # failing, not fixed: an earlier example still fails and may be the cause
+    # blocked_by is certain: a 404 on a resource whose create (POST/PUT) earlier in the file failed.
+    knock_on: bool = False
+    # Failing happy path no valid request could make succeed: the reason a human must look at it.
+    needs_human: str | None = None
 
     @property
     def root_cause(self) -> bool:

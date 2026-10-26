@@ -194,6 +194,14 @@ def _headline(check: CheckSummary, examples: ExampleImpact) -> str:
     return f"This PR makes {sections} stale and breaks {broken}"
 
 
+def _example_fix(outcome: ExampleOutcome) -> str:
+    if outcome.status == ExampleStatus.FIXED:
+        return "🔁 fixed after running"
+    if outcome.needs_human:
+        return f"❌ needs a human: {_cell(outcome.needs_human)}"
+    return "❌ no fix found"
+
+
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 
@@ -210,7 +218,7 @@ def _drift_table(drift: Drift) -> list[str]:
     ]
     lines += [
         f"| `{o.file}` | example `{_cell(o.label)}` (line {o.line}) | fails when run: {_cell('; '.join(o.failures))} "
-        f"| {'🔁 fixed after running' if o.status == ExampleStatus.FIXED else '❌ no fix found'} |"
+        f"| {_example_fix(o)} |"
         for o in [*drift.fixed, *drift.failing]
     ]
     return lines

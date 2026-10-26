@@ -255,6 +255,7 @@ def test_failures_after_an_unfixable_example_are_not_fixed_on_their_own() -> Non
     post, get = report.outcomes
     assert post.status == ExampleStatus.FAILING and post.blocked_by is None and post.root_cause
     assert get.status == ExampleStatus.FAILING and get.blocked_by == "POST /items (line 5)" and not get.root_cause
-    assert get.note == "not auto-fixed: it runs after POST /items (line 5), which still fails and may be the cause"
+    assert get.knock_on and post.needs_human == "unsure" and post.note == "needs a human: unsure"
+    assert get.note == "not auto-fixed: POST /items (line 5) failed in this run, so what it reads was never created"
     assert llm.labels == ["POST /items"]  # writing the GET's 404 into the docs would be wrong
     assert report.contents["docs/chain.md"] == CHAIN_DOCS

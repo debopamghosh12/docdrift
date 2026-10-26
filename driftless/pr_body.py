@@ -169,7 +169,7 @@ def _sync_comment(
         ]
         lines += [
             f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}"
-            + (f" ({_cell(o.note)})" if o.blocked_by and o.note else "")
+            + (f" ({_cell(o.note)})" if (o.blocked_by or o.needs_human) and o.note else "")
             for o in execution.failing
         ]
         return "\n".join(lines + ["", "---", FOOTER, ""])
@@ -296,6 +296,8 @@ def render_check_body(repo: str, ref: str, report: ExecutionReport, changed_file
 def _example_result(outcome: ExampleOutcome) -> str:
     if outcome.status == ExampleStatus.DEPENDENT and outcome.caused_by:
         return f"⛓️ failed only because of {_cell(outcome.caused_by)}"
+    if outcome.needs_human:
+        return "❌ needs a human"
     return EXAMPLE_LABELS[outcome.status]
 
 

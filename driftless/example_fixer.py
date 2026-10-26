@@ -21,7 +21,8 @@ class ExampleFixer:
         self._llm = llm
         self._system = render_prompt("system")
 
-    def fix(self, run: ExampleRun, snippet: str, code: str) -> ExampleFix:
+    def fix(self, run: ExampleRun, snippet: str, code: str, rejected: list[str] | None = None) -> ExampleFix:
+        """`rejected`: why earlier fixes of this example were thrown away, so the model doesn't repeat them."""
         example = run.example
         prompt = render_prompt(
             "fix_example",
@@ -32,6 +33,8 @@ class ExampleFixer:
             actual_body=run.actual_body or "(empty)",
             failures="\n".join(f"- {failure}" for failure in run.failures),
             code=code or "(not available)",
+            documented_status=describe_documented_status(example),
+            previous=describe_rejected(rejected or []),
         )
 
         def check(reply: ExampleFix) -> None:
@@ -100,6 +103,19 @@ def check_replacement(replacement: str, path: str) -> None:
         raise ValueError(
             f"replacement must contain exactly one runnable request (curl or http block), found {len(found)}"
         )
+
+
+def describe_documented_status(example: Example) -> str:
+    if example.expected_status is None:
+        return "none (a successful 2xx response is expected)"
+    return str(example.expected_status)
+
+
+def describe_rejected(rejected: list[str]) -> str:
+    if not rejected:
+        return ""
+    reasons = "\n".join(f"- {reason}" for reason in rejected)
+    return f"\n## Earlier fixes of this example that were rejected\n{reasons}\nDo not propose them again.\n"
 
 
 def describe_request(example: Example) -> str:
