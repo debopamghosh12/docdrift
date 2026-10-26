@@ -54,6 +54,9 @@ class FakeCheckRepo:
         self.commits[sha] = (parent_sha, dict(files))
         return sha
 
+    def read_file(self, repo: str, path: str, ref: str) -> str | None:
+        return self.commits[ref][1].get(path) if ref in self.commits else None
+
     def advance_branch(self, repo: str, branch: str, sha: str) -> None:
         assert self.commits[sha][0] == self.branches[branch], "not a fast-forward"
         self.branches[branch] = sha
@@ -157,8 +160,10 @@ def test_apply_commits_the_verified_fixes_to_the_pr_branch() -> None:
 
     published = checker.apply(REPO, 7, "maintainer", fixes_for)
 
-    [(sha, (parent, files))] = gh.commits.items()
+    sha = gh.branches["feature/x"]
+    parent, files = gh.commits[sha]
     assert parent == HEAD and asked == [HEAD]
+    assert len(gh.commits) == 2  # the check's fixes commit (on no branch), then the applied one
     assert gh.branches["feature/x"] == sha
     assert "Set `NEW_VAR`." in files["README.md"] and "PATCH /a" in files["README.md"]
     assert published.action == PublishAction.COMMITTED
@@ -170,6 +175,33 @@ def test_apply_commits_the_verified_fixes_to_the_pr_branch() -> None:
     checker.report(open_pr(sha), DocProposals(), 0.5)
     assert gh.statuses[-1][:2] == (sha, "success")
     assert "✅ Docs are in sync" in gh.comments[1].body
+
+
+def test_comment_points_at_a_commit_holding_exactly_its_fixes() -> None:
+    gh = FakeCheckRepo()
+    _, fixes = PreMergeChecker(gh).report(open_pr(), proposals(), 0.5)
+    [(stash, (parent, files))] = gh.commits.items()
+    assert parent == HEAD and files == fixes.files
+    assert gh.branches["feature/x"] == HEAD  # on no branch
+    assert stash in gh.comments[1].body
+
+    # Another process (a fresh Actions runner) reads back what the comment showed: no LLM run.
+    assert PreMergeChecker(gh).stored_fixes(REPO, 7, HEAD) == fixes
+
+
+def test_stored_fixes_only_for_the_checked_head_and_an_intact_commit() -> None:
+    gh = FakeCheckRepo()
+    PreMergeChecker(gh).report(open_pr(), proposals(), 0.5)
+    assert PreMergeChecker(gh).stored_fixes(REPO, 7, "c" * 40) is None  # the branch moved since
+    gh.commits.clear()  # e.g. garbage-collected
+    assert PreMergeChecker(gh).stored_fixes(REPO, 7, HEAD) is None
+
+
+def test_in_sync_check_stores_nothing() -> None:
+    gh = FakeCheckRepo()
+    PreMergeChecker(gh).report(open_pr(), DocProposals(), 0.5)
+    assert gh.commits == {}
+    assert PreMergeChecker(gh).stored_fixes(REPO, 7, HEAD) is None
 
 
 def test_apply_is_declined_without_write_access() -> None:

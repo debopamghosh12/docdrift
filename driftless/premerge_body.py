@@ -1,5 +1,6 @@
 """Markdown for the pre-merge PR comment and the commit status that goes with it."""
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -29,6 +30,28 @@ MAX_DIFF_CHARS = 40_000
 def premerge_marker(number: int) -> str:
     """Hidden marker of the one pre-merge comment per PR (edited in place on every push)."""
     return f"<!-- driftless:pre-merge={number} -->"
+
+
+_FIXES_RE = re.compile(r"<!-- driftless:fixes (\{.*?\}) -->")
+
+
+def fixes_marker(head_sha: str, commit_sha: str, files: list[str]) -> str:
+    """Hidden pointer to the commit holding the fixes the comment shows (see PreMergeChecker.report)."""
+    # `>` escaped: still valid JSON, and a path can never close the HTML comment.
+    data = json.dumps({"head": head_sha, "commit": commit_sha, "files": files}).replace(">", "\\u003e")
+    return f"<!-- driftless:fixes {data} -->"
+
+
+def parse_fixes_marker(body: str) -> tuple[str, str, list[str]] | None:
+    """(head_sha, commit_sha, files) from a pre-merge comment, if it points at stored fixes."""
+    match = _FIXES_RE.search(body)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(1))
+        return str(data["head"]), str(data["commit"]), [str(f) for f in data["files"]]
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -175,7 +198,7 @@ def render_apply_reply(user: str, branch: str, commit_url: str, files: list[str]
     listed = ", ".join(f"`{p}`" for p in files)
     return (
         f"✅ @{user} Driftless committed the verified doc fixes to `{branch}` in {commit_url} ({listed}). "
-        "The check reruns on this push.\n\n---\n" + FOOTER + "\n"
+        "Driftless re-checks the new head.\n\n---\n" + FOOTER + "\n"
     )
 
 

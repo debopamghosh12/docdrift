@@ -15,6 +15,8 @@ from driftless.doc_editor import final_docs
 from driftless.pipeline import AnalysisResult
 from driftless.pr_writer import CommentRef, PublishAction, PublishResult
 from driftless.premerge_body import (
+    fixes_marker,
+    parse_fixes_marker,
     premerge_marker,
     render_apply_declined,
     render_apply_reply,
@@ -70,6 +72,8 @@ class CheckRepo(Protocol):
 
     def commit_files(self, repo: str, parent_sha: str, files: dict[str, str], message: str) -> str: ...
 
+    def read_file(self, repo: str, path: str, ref: str) -> str | None: ...
+
     def advance_branch(self, repo: str, branch: str, sha: str) -> None:
         """Fast-forward `branch` to `sha`; fails if someone pushed in between."""
         ...
@@ -92,7 +96,12 @@ class PreMergeChecker:
         pr = result.pr
         fixes = final_docs(result.docs, proposals, min_confidence)
         body = render_premerge_comment(result, proposals, min_confidence, fixes)
-        mine = next((c for c in self._gh.list_comments(pr.repo, pr.number) if premerge_marker(pr.number) in c.body), None)
+        if fixes:
+            # Keep exactly these fixes in a commit on no branch, so `/driftless apply` can commit them
+            # later from any process (a fresh Actions runner has no cache) without asking the LLM again.
+            stash = self._gh.commit_files(pr.repo, pr.head_sha, fixes, f"Driftless: proposed doc fixes for #{pr.number}")
+            body += "\n" + fixes_marker(pr.head_sha, stash, sorted(fixes)) + "\n"
+        mine = self._comment(pr.repo, pr.number)
         url = self._gh.edit_comment(pr.repo, pr.number, mine.id, body) if mine else self._gh.create_comment(pr.repo, pr.number, body)
 
         check = summarize(proposals, min_confidence)
@@ -101,6 +110,27 @@ class PreMergeChecker:
             action=PublishAction.COMMENTED, url=url, files=sorted(fixes), check_state=check.state
         )
         return published, PendingFixes(head_sha=pr.head_sha, files=fixes)
+
+    def stored_fixes(self, repo: str, number: int, head_sha: str) -> PendingFixes | None:
+        """The fixes the PR's comment shows for `head_sha`, read back from the commit it points at."""
+        mine = self._comment(repo, number)
+        stored = parse_fixes_marker(mine.body) if mine else None
+        if stored is None or stored[0] != head_sha:
+            return None
+        _, commit, paths = stored
+        files: dict[str, str] = {}
+        for path in paths:
+            try:
+                text = self._gh.read_file(repo, path, commit)
+            except Exception:  # noqa: BLE001 - e.g. the commit was garbage-collected: re-check instead
+                return None
+            if text is None:
+                return None
+            files[path] = text
+        return PendingFixes(head_sha=head_sha, files=files)
+
+    def _comment(self, repo: str, number: int) -> CommentRef | None:
+        return next((c for c in self._gh.list_comments(repo, number) if premerge_marker(number) in c.body), None)
 
     def apply(
         self, repo: str, number: int, user: str, fixes_for: Callable[[PullState], PendingFixes]

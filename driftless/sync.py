@@ -201,6 +201,8 @@ class GitHubSyncer:
 
     Remembers the verified fixes of the last pre-merge check per PR, so `/driftless apply`
     commits exactly what the comment showed (when the head hasn't moved) without a second LLM run.
+    In another process (a GitHub Actions runner, a restarted server) they are read back from the
+    commit the comment points at.
     Likewise the web app's last dry run per PR is published as-is by the next pre-merge check or
     post-merge sync of that PR, when it is recent, at the same commit and with the same memory.
     """
@@ -315,17 +317,22 @@ class GitHubSyncer:
         from driftless.premerge import PreMergeChecker
 
         key = (repo.lower(), number)
+        checker = PreMergeChecker(GitHubWriter(self._settings.github_token))
 
         def fixes_for(pull: PullState) -> PendingFixes:
             with self._lock:
                 cached = self._fixes.get(key)
-            if cached is None or cached.head_sha != pull.head_sha:
-                self.pre_merge(repo, number, pull.head_sha, lambda: False)  # also refreshes the comment
-                with self._lock:
-                    cached = self._fixes[key]
-            return cached
+            if cached is not None and cached.head_sha == pull.head_sha:
+                return cached
+            # What the comment showed, from its fixes commit (another process ran the check), else re-check.
+            stored = checker.stored_fixes(repo, number, pull.head_sha)
+            if stored is not None:
+                return stored
+            self.pre_merge(repo, number, pull.head_sha, lambda: False)  # also refreshes the comment
+            with self._lock:
+                return self._fixes[key]
 
-        return PreMergeChecker(GitHubWriter(self._settings.github_token)).apply(repo, number, user, fixes_for)
+        return checker.apply(repo, number, user, fixes_for)
 
 
 def _clients(settings: Settings) -> tuple["GitHubClient", "JsonLLM"]:

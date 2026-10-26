@@ -28,6 +28,7 @@ $code
 
 Instructions:
 - Happy paths stay happy. If the documented status is 2xx (or none), your fix must keep a 2xx status: it documents a successful call. Prefer changing the request so it succeeds against the current code (for example, shorten a body to fit a new length limit, add a newly required field) over changing the documented status. Never turn a documented 2xx into a 4xx or 5xx: documenting the error the request now gets is not a fix. You may change one 2xx into another (200 -> 201) when the actual response shows it.
+- When a value must get shorter to fit a limit, replace it with a short value that still means something and fits (for a 3-character limit, "Tea" rather than "Mil" or "M"), not a truncation of the old value.
 - Your fix is re-run against the app. It only counts if the example then returns its documented 2xx status and JSON structure; otherwise it is thrown away.
 - If no valid request can produce a 2xx response (for example a limit so small that no meaningful value fits), set "fixed" to false and make "reason" name the cause in a few words, such as "MAX_BODY_LENGTH=2 makes any meaningful note body invalid". A human will update this example.
 - A 404 for a resource an earlier example was supposed to create is not this example's fault; do not document the 404.

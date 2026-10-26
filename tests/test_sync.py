@@ -130,9 +130,24 @@ def test_apply_rechecks_when_the_head_moved_since_the_comment(
     gh.branches["feature/x"] = "e" * 40  # someone pushed; the cached fixes are for an old head
 
     s.apply(REPO, 7, "maintainer")
-    [(_, (parent, _))] = gh.commits.items()
+    parent, _ = gh.commits[gh.branches["feature/x"]]
     assert analysis.runs == [HEAD, "e" * 40]
     assert parent == "e" * 40
+
+
+def test_apply_in_a_fresh_process_commits_what_the_comment_showed(
+    gh: FakeCheckRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GitHub Actions: the check and the apply run on different runners, with no shared cache.
+    analysis = FakeAnalysis(gh, lambda head: proposals())
+    monkeypatch.setattr(driftless.sync, "analyze_and_propose", analysis)
+    syncer().pre_merge(REPO, 7, HEAD, lambda: False)
+    [(_, (_, shown))] = gh.commits.items()  # the fixes commit the comment points at
+
+    applied = syncer().apply(REPO, 7, "maintainer")
+    assert applied.action == PublishAction.COMMITTED
+    assert analysis.runs == [HEAD]  # no second LLM run, so no different fix
+    assert gh.commits[gh.branches["feature/x"]] == (HEAD, shown)
 
 
 def test_pre_merge_reads_the_merge_base_for_pre_existing_drift(
