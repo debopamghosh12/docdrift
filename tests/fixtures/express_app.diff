@@ -1,0 +1,24 @@
+diff --git a/server/app.ts b/server/app.ts
+index aaaaaaa..bbbbbbb 100644
+--- a/server/app.ts
++++ b/server/app.ts
+@@ -1,14 +1,16 @@
+ import express from "express";
+ 
+ const app = express();
+-const port = process.env.PORT || 3000;
++const port = process.env.SERVER_PORT || 3000;
++const apiKey = process.env["API_KEY"];
+ 
+-export function createUser(name: string) {
++export function createUser(name: string, email: string) {
+   return { name };
+ }
+ 
+-app.get("/users/:id", (req, res) => res.json({}));
++app.get("/users/:id", (req, res) => res.json({}));
++app.post('/users', (req, res) => res.json({}));
+-app.delete("/legacy", (req, res) => res.send("gone"));
++export const deleteUser = async (id: string) => id;
+ 
+ export class UserService {}

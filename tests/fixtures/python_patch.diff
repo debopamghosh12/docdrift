@@ -1,0 +1,20 @@
+diff --git a/app/greetings.py b/app/greetings.py
+index 1234567..89abcde 100644
+--- a/app/greetings.py
++++ b/app/greetings.py
+@@ -1,9 +1,12 @@
+ import os
+ 
+-LANG = os.getenv("GREETING_LANG")
++LANG = os.environ.get("APP_LANG", "en")
+ 
+ 
+-def greet(name):
++def greet(name, greeting="Hello"):
+     return f"Hello {name}"
+ 
+-def farewell(name):
+-    return f"Bye {name}"
++
++async def welcome(user: str) -> str:
++    return f"Welcome {user}"

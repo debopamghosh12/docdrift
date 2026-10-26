@@ -1,0 +1,27 @@
+diff --git a/src/new_module.py b/src/new_module.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/new_module.py
+@@ -0,0 +1,2 @@
++def created():
++    return 1
+diff --git a/src/old_module.py b/src/old_module.py
+deleted file mode 100644
+index 2222222..0000000
+--- a/src/old_module.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-def doomed():
+-    return 0
+diff --git a/src/before.py b/src/after.py
+similarity index 90%
+rename from src/before.py
+rename to src/after.py
+index 3333333..4444444 100644
+--- a/src/before.py
++++ b/src/after.py
+@@ -1,3 +1,3 @@
+ def stays():
+-    return "old"
++    return "new"

@@ -1,0 +1,44 @@
+from io import StringIO
+
+from rich.console import Console
+
+from docdrift.models import ChangedFile, DocFile, PullRequestInfo
+from docdrift.pipeline import analyze_pull_request
+from docdrift.report import render_analysis
+
+
+class FakeProvider:
+    def fetch_pull_request(self, repo_name: str, number: int) -> PullRequestInfo:
+        return PullRequestInfo(
+            repo=repo_name,
+            number=number,
+            title="Rename connect",
+            base_ref="main",
+            merge_base_sha="a" * 40,
+            head_sha="b" * 40,
+            merge_commit_sha="c" * 40,
+            files=[
+                ChangedFile(
+                    path="lib/db.py",
+                    before="def connect(url):\n    return url\n",
+                    after="def open_connection(url):\n    return url\n",
+                )
+            ],
+        )
+
+    def fetch_docs(self, repo_name: str, ref: str) -> list[DocFile]:
+        assert ref == "c" * 40
+        return [DocFile(path="README.md", content="# Lib\n\n## Usage\n\nCall `connect(url)`.\n")]
+
+
+def test_pipeline_end_to_end() -> None:
+    result = analyze_pull_request(FakeProvider(), "me/lib", 7)
+    assert [s.name for s in result.changeset.symbols] == ["open_connection"]
+    assert [c.section.heading for c in result.candidates] == ["Usage"]
+    assert [m.name for m in result.missing] == ["open_connection"]
+
+    out = StringIO()
+    render_analysis(result, Console(file=out, width=160))
+    text = out.getvalue()
+    assert "connect -> open_connection" in text
+    assert "README.md:3-5" in text

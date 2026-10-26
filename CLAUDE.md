@@ -22,16 +22,19 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 
 ## Layout
 - `docdrift/config.py` — settings (pydantic-settings, reads `.env`)
-- `docdrift/github_client.py` — GitHub API wrapper (PyGithub)
-- `docdrift/diff_parser.py` — parse unified diffs into structured changes
-- `docdrift/doc_index.py` — split markdown docs into addressable sections
+- `docdrift/models.py` — shared pydantic models (ChangedFile, PullRequestInfo, ChangeSet, DocSection, Candidate, ...)
+- `docdrift/github_client.py` — GitHub API wrapper (PyGithub); before = merge base, after = PR head, docs at merge commit
+- `docdrift/diff_parser/` — package: `patch.py` (unified diff parsing), `python_symbols.py` (ast), `regex_symbols.py` (JS/TS + Python fallback), `patterns.py` (env vars, routes, CLI flags), `symbols.py` (before/after comparison); `build_changeset()` in `__init__`
+- `docdrift/doc_index.py` — split markdown docs into heading-delimited sections
+- `docdrift/candidates.py` — score sections against the ChangeSet; flag missing docs
+- `docdrift/report.py` — rich terminal tables
 - `docdrift/analyzer.py` — LLM: decide which sections are stale, propose rewrites
 - `docdrift/verifier.py` — check rewrites against actual code
 - `docdrift/pr_writer.py` — build branch/commit/PR with per-change explanations
 - `docdrift/memory.py` — SQLite memory of decisions & reviewer feedback
 - `docdrift/pipeline.py` — orchestrates the end-to-end run
 - `docdrift/server.py` — FastAPI webhook endpoint (HMAC-verified)
-- `docdrift/cli.py` — typer CLI (`python -m docdrift.cli --help`)
+- `docdrift/cli.py` — typer CLI (`docdrift run --repo owner/name --pr N`)
 - `prompts/` — LLM prompt templates
 - `tests/` — pytest
 

@@ -18,6 +18,7 @@ dependencies = [
     "sqlmodel>=0.0.16",
     "openai>=1.30",
     "typer>=0.12",
+    "rich>=13.7",
 ]
 
 [project.optional-dependencies]
