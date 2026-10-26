@@ -98,7 +98,8 @@ class DocRunner:
                 continue
             fixed_text, rerun, echoed = self._echo(box, path, env, target.example, fixed_text, rerun)
             if echoed:
-                reason += f" Also updated it where documented responses echo it: {'; '.join(echoed)}."
+                stop = "" if reason.rstrip().endswith((".", "!", "?")) else "."
+                reason = f"{reason.rstrip()}{stop} Also updated it where documented responses echo it: {'; '.join(echoed)}."
             state.fixes.setdefault(index, []).append(reason)
             state.notes.pop(index, None)
             # Later examples that only start passing now were knock-on failures of this one.

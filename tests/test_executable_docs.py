@@ -310,7 +310,7 @@ class RenamingLLM:
         replacement = snippet.replace('{"name": "Pen"}', '{"name": "Ink", "price": 1.5}').replace(
             '"name": "Pen", "price": 1.5', '"name": "Ink", "price": 1.5'
         )
-        reply = ExampleFix(fixed=True, target="request", reason="price is required.", replacement=replacement)
+        reply = ExampleFix(fixed=True, target="request", reason="price is required", replacement=replacement)
         if check:
             check(reply)
         return reply
@@ -325,6 +325,7 @@ def test_a_fixed_request_value_is_updated_where_later_responses_echo_it() -> Non
     assert (post.status, get.status, other.status) == (ExampleStatus.FIXED, ExampleStatus.DEPENDENT, ExampleStatus.PASSED)
     assert report.passing == report.total == 3
     assert not any("name" in w for o in report.outcomes for w in o.warnings)  # no value warnings left for it
+    assert post.fixes[0].startswith("price is required. Also updated")  # a reason without a full stop gets one
     assert 'Also updated it where documented responses echo it: GET /items/1 (line 18): `name` "Pen" → "Ink"' in post.fixes[0]
 
     text = report.contents["docs/echo.md"]
