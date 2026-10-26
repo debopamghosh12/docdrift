@@ -79,6 +79,7 @@ class PublishResult(BaseModel):
     files: list[str] = Field(default_factory=list)
     skipped_files: list[str] = Field(default_factory=list)  # changed on the default branch since
     check_state: str | None = None  # pre-merge commit status: success / failure / error
+    number: int | None = None  # the docs PR's number, when one was opened or updated
 
 
 CHECK_BRANCH = f"{DRIFTLESS_BRANCH_PREFIX}fix-examples"
@@ -122,7 +123,9 @@ class PRWriter:
             ref, action = self._gh.update_pull(pr.repo, existing.number, title, body), PublishAction.UPDATED
         else:
             ref, action = self._gh.create_pull(pr.repo, branch, base, title, body), PublishAction.OPENED
-        return PublishResult(action=action, url=ref.url, branch=branch, files=sorted(files), skipped_files=skipped)
+        return PublishResult(
+            action=action, url=ref.url, branch=branch, files=sorted(files), skipped_files=skipped, number=ref.number
+        )
 
     def publish_example_fixes(
         self, repo: str, ref: str, originals: dict[str, str], report: ExecutionReport

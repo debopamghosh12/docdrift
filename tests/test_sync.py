@@ -68,7 +68,7 @@ def gh(monkeypatch: pytest.MonkeyPatch, base: FakeBaseClient) -> FakeCheckRepo:
 
 
 def syncer() -> GitHubSyncer:
-    return GitHubSyncer(Settings(_env_file=None, github_token="t", llm_api_key="k", execute_examples=False))
+    return GitHubSyncer(Settings(_env_file=None, github_token="t", llm_api_key="k", execute_examples=False, database_url="sqlite://"))
 
 
 def test_pre_merge_sets_pending_then_the_result(gh: FakeCheckRepo, monkeypatch: pytest.MonkeyPatch) -> None:

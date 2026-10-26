@@ -87,3 +87,4 @@ class DocProposals(BaseModel):
     covered: list[CoveredItem] = Field(default_factory=list)  # already documented by a rewrite
     errors: list[str] = Field(default_factory=list)
     execution: ExecutionReport | None = None  # examples run in all doc files (fixes included)
+    guided_by_memory: bool = False  # the model saw the repo's style notes / rejected changes

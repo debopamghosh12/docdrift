@@ -4,6 +4,10 @@
   commit (one PR comment, edited in place, and a commit status).
 - `pull_request` closed + merged: post-merge sync (docs PR, or an in-sync comment).
 - `issue_comment` "/driftless apply" on an open PR: commit the verified doc fixes to its branch.
+- `issue_comment` "/driftless ignore|unignore|style|unstyle|memory ...": change or show what
+  Driftless remembers for the repo.
+- `pull_request` closed on one of Driftless's own docs PRs: remember its changes as accepted
+  (merged) or rejected (closed without merging).
 """
 
 import hashlib
@@ -15,10 +19,11 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from driftless.commands import CommandName, parse_command
 from driftless.config import Settings, get_settings
 from driftless.jobs import Enqueued, Job, JobMode, JobStore, Syncer
+from driftless.memory import Memory
 from driftless.pipeline import is_own_branch
-from driftless.premerge_body import APPLY_COMMAND
 
 logger = logging.getLogger("driftless.server")
 
@@ -33,18 +38,20 @@ def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature.removeprefix("sha256="))
 
 
-def create_app(settings: Settings | None = None, syncer: Syncer | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, syncer: Syncer | None = None, memory: Memory | None = None) -> FastAPI:
     settings = settings or get_settings()
+    memory = memory or Memory(settings.database_url)
     if syncer is None:
         from driftless.sync import GitHubSyncer
 
-        syncer = GitHubSyncer(settings)
+        syncer = GitHubSyncer(settings, memory=memory)
     if not settings.webhook_secret:
         logger.warning("WEBHOOK_SECRET is not set; every webhook delivery will be rejected")
 
-    store = JobStore(syncer)
+    store = JobStore(syncer, log=memory)
     app = FastAPI(title="Driftless")
     app.state.jobs = store
+    app.state.memory = memory
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -72,7 +79,7 @@ def create_app(settings: Settings | None = None, syncer: Syncer | None = None) -
         if x_github_event == "ping":
             return JSONResponse({"status": "ok", "zen": payload.get("zen")})
         if x_github_event == "pull_request":
-            return _pull_request(store, background, payload)
+            return _pull_request(store, memory, background, payload)
         if x_github_event == "issue_comment":
             return _issue_comment(store, background, payload)
         return _ignored(f"event {x_github_event!r}")
@@ -80,12 +87,16 @@ def create_app(settings: Settings | None = None, syncer: Syncer | None = None) -
     return app
 
 
-def _pull_request(store: JobStore, background: BackgroundTasks, payload: dict[str, Any]) -> JSONResponse:
+def _pull_request(
+    store: JobStore, memory: Memory, background: BackgroundTasks, payload: dict[str, Any]
+) -> JSONResponse:
     pr = payload.get("pull_request") or {}
     action = payload.get("action")
-    if is_own_branch(pr.get("head", {}).get("ref", "")):
-        return _ignored("Driftless's own docs PR")
     repo, number = payload["repository"]["full_name"], int(pr["number"])
+    if is_own_branch(pr.get("head", {}).get("ref", "")):
+        if action == "closed":
+            return _docs_pr_closed(memory, repo, number, bool(pr.get("merged")))
+        return _ignored("Driftless's own docs PR")
     if action == "closed":
         if not pr.get("merged"):
             return _ignored("pull request was closed without merging")
@@ -98,19 +109,35 @@ def _pull_request(store: JobStore, background: BackgroundTasks, payload: dict[st
     return _ignored(f"pull_request action {action!r}")
 
 
+def _docs_pr_closed(memory: Memory, repo: str, number: int, merged: bool) -> JSONResponse:
+    """Feedback: a merged docs PR's changes were accepted, a closed one's rejected."""
+    changes = memory.resolve_docs_pr(repo, number, merged)
+    if changes is None:
+        return _ignored("Driftless's own docs PR, not opened by this server")
+    outcome = "accepted" if merged else "rejected"
+    logger.info("remembered %d change(s) of docs PR %s#%d as %s", len(changes), repo, number, outcome)
+    return JSONResponse({"status": "remembered", "outcome": outcome, "changes": len(changes)})
+
+
 def _issue_comment(store: JobStore, background: BackgroundTasks, payload: dict[str, Any]) -> JSONResponse:
     issue, comment = payload.get("issue") or {}, payload.get("comment") or {}
     if payload.get("action") != "created":
         return _ignored("comment was not created")
     if not issue.get("pull_request"):
         return _ignored("comment is not on a pull request")
-    if (comment.get("body") or "").strip() != APPLY_COMMAND:
+    command = parse_command(comment.get("body") or "")
+    if command is None:
         return _ignored("not a Driftless command")
-    if issue.get("state") != "open":
-        return _ignored("pull request is closed")
     # Write access and fork checks need API calls, so the job does them (and replies if refused).
     user = (comment.get("user") or {}).get("login", "")
-    enqueued = store.enqueue(payload["repository"]["full_name"], int(issue["number"]), JobMode.APPLY, requested_by=user)
+    repo, number = payload["repository"]["full_name"], int(issue["number"])
+    if command.name == CommandName.APPLY:
+        if issue.get("state") != "open":
+            return _ignored("pull request is closed")
+        return _queue(store, background, store.enqueue(repo, number, JobMode.APPLY, requested_by=user))
+    enqueued = store.enqueue(
+        repo, number, JobMode.MEMORY, requested_by=user, command=command.text, comment_id=comment.get("id")
+    )
     return _queue(store, background, enqueued)
 
 

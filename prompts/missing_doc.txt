@@ -17,6 +17,7 @@ $outline
 $example
 </section>
 
+$memory
 Write a new section of $target_file documenting `$name`, and choose where in that file it belongs.
 
 Instructions:

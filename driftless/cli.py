@@ -46,6 +46,7 @@ def run(
     from driftless.config import get_settings
     from driftless.github_client import GitHubClient
     from driftless.llm import JsonLLM, LLMError
+    from driftless.memory import Memory
     from driftless.pipeline import analyze_pull_request
     from driftless.report import render_analysis
 
@@ -64,21 +65,29 @@ def run(
         raise typer.Exit(code=1) from exc
 
     client = GitHubClient(settings.github_token or None)
+    memory = Memory(settings.database_url)
     with _exit_on_errors(console), console.status(f"Analyzing {repo}#{pr}..."):
-        result = analyze_pull_request(client, repo, pr, top_k=top)
+        result = analyze_pull_request(client, repo, pr, top_k=top, memory=memory.repo_memory(repo))
     render_analysis(result, console)
     proposals = _propose(result, llm, min_confidence, console)
     if execute and settings.execute_examples:
         files = client.fetch_files(repo, result.snapshot_ref)
         proposals.execution = _execute_all(result, proposals, files, llm, min_confidence, settings, console)
+    from driftless.feedback import remembered_line
+
+    remembered = remembered_line(result, proposals)
+    if remembered:
+        console.print(remembered, markup=False)
     if dry_run:
         return
 
     from driftless.github_writer import GitHubWriter
     from driftless.pr_writer import PublishAction, PRWriter
+    from driftless.sync import remember_docs_pr
 
     with _exit_on_errors(console), console.status("Publishing..."):
         published = PRWriter(GitHubWriter(settings.github_token)).publish(result, proposals, min_confidence)
+    remember_docs_pr(memory, result, proposals, min_confidence, published)
     for path in published.skipped_files:
         console.print(f"[yellow]Skipped {path}: it changed on the default branch since the merge.[/]")
     if published.action == PublishAction.COMMENTED:
@@ -147,10 +156,11 @@ def _execute_all(
     from driftless.example_fixer import ExampleFixer
     from driftless.executable_docs import execute_all_docs
     from driftless.execution_report import render_execution
+    from driftless.sync import executable_docs
 
     with console.status("Running the examples in all docs against the app...") as status:
         report = execute_all_docs(
-            result.docs,
+            executable_docs(result),
             files,
             proposals,
             min_confidence,

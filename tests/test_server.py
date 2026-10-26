@@ -26,6 +26,7 @@ class FakeSync:
         self.calls: list[tuple[str, int]] = []
         self.pre_merge_calls: list[str] = []
         self.apply_calls: list[str] = []
+        self.memory_calls: list[tuple[str, str]] = []
         self.error = error
         self.block: dict[str, threading.Event] = {}  # head sha -> released
         self.started: dict[str, threading.Event] = {}
@@ -49,6 +50,10 @@ class FakeSync:
         self.apply_calls.append(user)
         return PublishResult(action=PublishAction.COMMITTED, url="https://github.com/me/app/commit/abc")
 
+    def remember(self, repo: str, number: int, user: str, command: str) -> PublishResult:
+        self.memory_calls.append((user, command))
+        return PublishResult(action=PublishAction.COMMENTED, url=COMMENT_URL)
+
     def hold(self, head_sha: str) -> threading.Event:
         """Make the pre-merge run of `head_sha` block until the returned event is set."""
         self.started[head_sha] = threading.Event()
@@ -57,7 +62,7 @@ class FakeSync:
 
 
 def make_client(sync: FakeSync, secret: str = SECRET) -> TestClient:
-    return TestClient(create_app(Settings(_env_file=None, webhook_secret=secret), syncer=sync))
+    return TestClient(create_app(Settings(_env_file=None, webhook_secret=secret, database_url="sqlite://"), syncer=sync))
 
 
 def sign(body: bytes, secret: str = SECRET) -> str:
@@ -84,7 +89,9 @@ def pr_event(
     }
 
 
-def comment_event(body: str = "/driftless apply", state: str = "open", on_pr: bool = True) -> dict[str, Any]:
+def comment_event(
+    body: str = "/driftless apply", state: str = "open", on_pr: bool = True, comment_id: int = 1
+) -> dict[str, Any]:
     issue: dict[str, Any] = {"number": 7, "state": state}
     if on_pr:
         issue["pull_request"] = {"url": "https://api.github.com/repos/me/app/pulls/7"}
@@ -92,7 +99,7 @@ def comment_event(body: str = "/driftless apply", state: str = "open", on_pr: bo
         "action": "created",
         "repository": {"full_name": "me/app"},
         "issue": issue,
-        "comment": {"body": body, "user": {"login": "maintainer"}},
+        "comment": {"id": comment_id, "body": body, "user": {"login": "maintainer"}},
     }
 
 
@@ -189,7 +196,7 @@ def test_same_pr_does_not_run_twice_concurrently() -> None:
             release.wait(5)
             return PublishResult(action=PublishAction.UPDATED, url=DOCS_PR_URL)
 
-    app = create_app(Settings(_env_file=None, webhook_secret=SECRET), syncer=SlowSync())
+    app = create_app(Settings(_env_file=None, webhook_secret=SECRET, database_url="sqlite://"), syncer=SlowSync())
     store = app.state.jobs
     job = store.enqueue("me/app", 7).job
     worker = run_in_thread(store, job)
@@ -347,3 +354,56 @@ def test_apply_does_not_supersede_a_running_check() -> None:
     check = store.enqueue("me/app", 7, JobMode.PRE_MERGE, head_sha="a1").job
     apply = store.enqueue("me/app", 7, JobMode.APPLY, requested_by="maintainer")
     assert apply.created and apply.superseded is None and not check.superseded
+
+
+# --- memory --------------------------------------------------------------------------------------
+
+
+def test_memory_commands_queue_one_job_per_comment() -> None:
+    sync = FakeSync()
+    client = make_client(sync)
+    first = post(client, "issue_comment", comment_event("/driftless ignore `CHANGELOG.md`", comment_id=11))
+    second = post(client, "issue_comment", comment_event("/driftless style use British spelling", comment_id=12))
+    on_closed = post(client, "issue_comment", comment_event("/driftless memory", state="closed", comment_id=13))
+    assert [r.status_code for r in (first, second, on_closed)] == [202, 202, 202]
+    assert sync.memory_calls == [
+        ("maintainer", "/driftless ignore CHANGELOG.md"),
+        ("maintainer", "/driftless style use British spelling"),
+        ("maintainer", "/driftless memory"),
+    ]
+    runs = client.get("/runs").json()
+    assert [(r["mode"], r["comment_id"]) for r in runs] == [("memory", 13), ("memory", 12), ("memory", 11)]
+    for payload in (comment_event("/driftless ignore"), comment_event("/driftless forget everything")):
+        assert post(client, "issue_comment", payload).json()["status"] == "ignored"
+
+
+def test_closing_a_docs_pr_is_remembered_as_feedback() -> None:
+    from driftless.memory import Memory, RememberedChange
+
+    memory = Memory("sqlite://")
+    memory.record_docs_pr("me/app", 7, 6, [RememberedChange(file="README.md", section="Config", kind="updated", reason="r")])
+    app = create_app(Settings(_env_file=None, webhook_secret=SECRET), syncer=FakeSync(), memory=memory)
+    client = TestClient(app)
+
+    closed = post(client, "pull_request", pr_event("closed", merged=False, head_ref="driftless/pr-6"))
+    assert closed.json() == {"status": "remembered", "outcome": "rejected", "changes": 1}
+    assert [c.section for c in memory.recent_rejected("me/app")] == ["Config"]
+
+    other = post(client, "pull_request", {**pr_event("closed", head_ref="driftless/pr-9"), "pull_request": {
+        "number": 99, "merged": True, "head": {"ref": "driftless/pr-9", "sha": "x"}}})
+    assert other.json()["status"] == "ignored"  # a docs PR this server never opened
+    assert post(client, "pull_request", pr_event("opened", head_ref="driftless/pr-6")).json()["status"] == "ignored"
+
+
+def test_runs_survive_a_restart(tmp_path: Any) -> None:
+    url = f"sqlite:///{(tmp_path / 'driftless.db').as_posix()}"
+    settings = Settings(_env_file=None, webhook_secret=SECRET, database_url=url)
+    first = TestClient(create_app(settings, syncer=FakeSync()))
+    assert post(first, "pull_request", pr_event()).status_code == 202
+    stuck = first.app.state.jobs.enqueue("me/app", 8, JobMode.POST_MERGE).job  # queued, never run
+
+    restarted = TestClient(create_app(settings, syncer=FakeSync()))
+    runs = {r["pr"]: r for r in restarted.get("/runs").json()}
+    assert runs[7]["status"] == "succeeded" and runs[7]["docs_pr_url"] == DOCS_PR_URL
+    assert runs[8]["id"] == stuck.id and runs[8]["status"] == "failed"
+    assert runs[8]["error"] == "interrupted: the server restarted before this job finished"

@@ -1,6 +1,7 @@
 """LLM calls: batched section reviews, verification retries, and new-section drafts."""
 
 from driftless.evidence import best_example, doc_outline, file_anchors, relevant_hunks
+from driftless.feedback import memory_prompt
 from driftless.llm import JsonLLM
 from driftless.models import Candidate, DocSection, MissingDoc
 from driftless.normalize import normalize_heading
@@ -57,6 +58,7 @@ class Reviewer:
             hunks=relevant_hunks(result.pr.files, terms),
             sections=sections,
             ids=", ".join(ids),
+            memory=memory_prompt(result.memory),
         )
 
         def check(reply: BatchVerdicts) -> None:
@@ -81,6 +83,7 @@ class Reviewer:
             location=section.location,
             heading_path=_heading_path(section),
             section=section.text,
+            memory=memory_prompt(result.memory),
         ) + _feedback(previous, failures)
         return self._llm.complete(self._system, prompt, SectionVerdict)
 
@@ -111,6 +114,7 @@ class Reviewer:
             outline=doc_outline(file_sections),
             example_location=example.location if example else "none",
             example=example.text if example else "(none)",
+            memory=memory_prompt(result.memory),
         )
         if feedback:
             prompt += _feedback(*feedback)

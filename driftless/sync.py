@@ -1,6 +1,9 @@
-"""Headless runs used by the webhook server: post-merge sync, pre-merge check, `/driftless apply`.
+"""Headless runs used by the webhook server: post-merge sync, pre-merge check, `/driftless apply`,
+and memory commands.
 
-The CLI runs the same steps with rich output in between.
+Every run uses what Driftless remembers for the repo (ignore rules, style notes, rejected
+changes), and every docs PR it opens is remembered so its fate can be fed back. The CLI runs the
+same steps with rich output in between.
 """
 
 import threading
@@ -8,12 +11,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from driftless.config import Settings
-from driftless.pr_writer import PublishResult
+from driftless.memory import Memory, RepoMemory
+from driftless.pr_writer import PublishAction, PublishResult
 from driftless.premerge import PendingFixes, PullState, SupersededError
 
 if TYPE_CHECKING:
     from driftless.github_client import GitHubClient
     from driftless.llm import JsonLLM
+    from driftless.models import DocFile
     from driftless.pipeline import AnalysisResult
     from driftless.proposals import DocProposals
 
@@ -23,15 +28,37 @@ class SyncConfigError(RuntimeError):
 
 
 def sync_pull_request(
-    settings: Settings, repo: str, number: int, min_confidence: float = 0.5, top_k: int = 10
+    settings: Settings,
+    repo: str,
+    number: int,
+    min_confidence: float = 0.5,
+    top_k: int = 10,
+    memory: Memory | None = None,
 ) -> PublishResult:
     """Raises OwnPullRequestError for Driftless's own PRs and SyncConfigError for missing secrets."""
     from driftless.github_writer import GitHubWriter
     from driftless.pr_writer import PRWriter
 
     client, llm = _clients(settings)
-    result, proposals = analyze_and_propose(settings, client, llm, repo, number, min_confidence, top_k)
-    return PRWriter(GitHubWriter(settings.github_token)).publish(result, proposals, min_confidence)
+    repo_memory = memory.repo_memory(repo) if memory else None
+    result, proposals = analyze_and_propose(
+        settings, client, llm, repo, number, min_confidence, top_k, repo_memory=repo_memory
+    )
+    published = PRWriter(GitHubWriter(settings.github_token)).publish(result, proposals, min_confidence)
+    if memory:
+        remember_docs_pr(memory, result, proposals, min_confidence, published)
+    return published
+
+
+def remember_docs_pr(
+    memory: Memory, result: "AnalysisResult", proposals: "DocProposals", min_confidence: float, published: PublishResult
+) -> None:
+    """Keep what an opened/updated docs PR proposes, to learn from it once it's merged or closed."""
+    from driftless.feedback import proposed_changes
+
+    if published.action in (PublishAction.OPENED, PublishAction.UPDATED) and published.number:
+        changes = proposed_changes(result, proposals, min_confidence, published.files)
+        memory.record_docs_pr(result.pr.repo, published.number, result.pr.number, changes)
 
 
 def analyze_and_propose(
@@ -44,6 +71,7 @@ def analyze_and_propose(
     top_k: int = 10,
     pre_merge: bool = False,
     checkpoint: Callable[["AnalysisResult"], None] = lambda result: None,
+    repo_memory: RepoMemory | None = None,
 ) -> tuple["AnalysisResult", "DocProposals"]:
     """Analyze -> LLM rewrites + verification -> executed examples. `checkpoint` runs between
     stages (pre-merge checks raise SupersededError there once a newer push arrived)."""
@@ -52,7 +80,7 @@ def analyze_and_propose(
     from driftless.analyzer import Analyzer
     from driftless.pipeline import analyze_pull_request
 
-    result = analyze_pull_request(client, repo, number, top_k=top_k, pre_merge=pre_merge)
+    result = analyze_pull_request(client, repo, number, top_k=top_k, pre_merge=pre_merge, memory=repo_memory)
     checkpoint(result)
     proposals = Analyzer(llm).propose(result, min_confidence=min_confidence)
     checkpoint(result)
@@ -61,7 +89,7 @@ def analyze_and_propose(
         from driftless.executable_docs import execute_all_docs
 
         proposals.execution = execute_all_docs(
-            result.docs,
+            executable_docs(result),
             client.fetch_files(repo, result.snapshot_ref),
             proposals,
             min_confidence,
@@ -96,13 +124,28 @@ def mark_baseline(
     if examples and settings.execute_examples:
         base_execution = execute_docs(
             client.fetch_files(repo, base),
-            {d.path: d.content for d in base_docs},
+            {d.path: d.content for d in base_docs if result.memory.ignoring_file_rule(d.path) is None},
             None,
             Path(settings.sandbox_cache_dir),
             settings.sandbox_startup_timeout,
         )
     base_code = build_code_index(client.fetch_sources(repo, base)) if sections else None
     mark_pre_existing(proposals, result.code, base_docs, base_code, base_execution)
+
+
+def executable_docs(result: "AnalysisResult") -> list["DocFile"]:
+    """The doc files whose examples run: all of them except those an ignore rule matches.
+    Such a rule counts as applied (for the 🧠 line) when the file has examples."""
+    from driftless.examples import extract_examples
+
+    kept = []
+    for doc in result.docs:
+        rule = result.memory.ignoring_file_rule(doc.path)
+        if rule is None:
+            kept.append(doc)
+        elif rule not in result.ignored and extract_examples(doc.path, doc.content):
+            result.ignored.append(rule)
+    return kept
 
 
 class GitHubSyncer:
@@ -112,15 +155,29 @@ class GitHubSyncer:
     commits exactly what the comment showed (when the head hasn't moved) without a second LLM run.
     """
 
-    def __init__(self, settings: Settings, min_confidence: float = 0.5, top_k: int = 10) -> None:
+    def __init__(
+        self, settings: Settings, min_confidence: float = 0.5, top_k: int = 10, memory: Memory | None = None
+    ) -> None:
         self._settings = settings
         self._min_confidence = min_confidence
         self._top_k = top_k
+        self._memory = memory or Memory(settings.database_url)
         self._fixes: dict[tuple[str, int], PendingFixes] = {}
         self._lock = threading.Lock()
 
     def post_merge(self, repo: str, number: int) -> PublishResult:
-        return sync_pull_request(self._settings, repo, number, self._min_confidence, self._top_k)
+        return sync_pull_request(self._settings, repo, number, self._min_confidence, self._top_k, self._memory)
+
+    def remember(self, repo: str, number: int, user: str, command: str) -> PublishResult:
+        from driftless.commands import MemoryCommands, parse_command
+        from driftless.github_writer import GitHubWriter
+
+        parsed = parse_command(command)
+        if parsed is None:
+            raise ValueError(f"not a memory command: {command!r}")
+        if not self._settings.github_token:
+            raise SyncConfigError("GITHUB_TOKEN is required to reply to commands")
+        return MemoryCommands(GitHubWriter(self._settings.github_token), self._memory).run(repo, number, user, parsed)
 
     def pre_merge(self, repo: str, number: int, head_sha: str, should_stop: Callable[[], bool]) -> PublishResult:
         from driftless.github_writer import GitHubWriter
@@ -139,7 +196,7 @@ class GitHubSyncer:
         try:
             result, proposals = analyze_and_propose(
                 self._settings, client, llm, repo, number, self._min_confidence, self._top_k,
-                pre_merge=True, checkpoint=checkpoint,
+                pre_merge=True, checkpoint=checkpoint, repo_memory=self._memory.repo_memory(repo),
             )
             mark_baseline(self._settings, client, result, proposals)
             checkpoint(result)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from driftless.doc_index import is_doc_path
 from driftless.example_impact import example_impact, impact_sentence
+from driftless.feedback import remembered_line
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.proposals import DocProposals, Verification, VerificationStatus
@@ -90,6 +91,9 @@ def render_pr_body(
     impact = example_impact(execution.outcomes) if execution else None
     if impact and impact.roots:
         parts += [impact_sentence(impact, f"#{pr.number}"), ""]
+    remembered = remembered_line(result, proposals)
+    if remembered:
+        parts += [remembered, ""]
     if not rows and not proposals.covered:
         parts.append(
             "Static analysis found no stale sections. Every change below comes from running the docs' "
@@ -133,6 +137,18 @@ def render_sync_comment(
     result: AnalysisResult, proposals: DocProposals, min_confidence: float, skipped_files: list[str] | None = None
 ) -> str:
     """Comment for the source PR when Driftless has nothing to commit."""
+    body = _sync_comment(result, proposals, min_confidence, skipped_files)
+    remembered = remembered_line(result, proposals)
+    if not remembered:
+        return body
+    footer = "\n---\n" + FOOTER
+    head, _, tail = body.rpartition(footer)
+    return f"{head}\n{remembered}\n{footer}{tail}"
+
+
+def _sync_comment(
+    result: AnalysisResult, proposals: DocProposals, min_confidence: float, skipped_files: list[str] | None
+) -> str:
     rows = change_rows(proposals, min_confidence)
     header = source_marker(result.pr.number)
     if skipped_files:

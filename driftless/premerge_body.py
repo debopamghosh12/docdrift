@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from driftless.doc_editor import unified_diff
 from driftless.example_impact import ExampleImpact, broken_phrase, consequence_sentence, example_impact
+from driftless.feedback import remembered_line
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
 from driftless.pr_body import (
@@ -163,6 +164,9 @@ def render_premerge_comment(
             parts += ["", "This PR comes from a fork, so Driftless can't push to it: apply the diff above by hand."]
         else:
             parts += ["", f"Reply `{APPLY_COMMAND}` to commit these doc fixes to this branch."]
+    remembered = remembered_line(result, proposals)
+    if remembered:
+        parts += ["", remembered]
     parts += ["", "---", f"<sub>Driftless checked `{sha}` · this comment updates on every push</sub>", FOOTER, ""]
     return "\n".join(parts)
 

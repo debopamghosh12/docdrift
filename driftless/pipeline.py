@@ -2,12 +2,13 @@
 
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from driftless.candidates import find_missing_docs, select_candidates
 from driftless.code_index import CodeIndex, build_code_index
 from driftless.diff_parser import build_changeset, is_source_path
 from driftless.doc_index import index_documents
+from driftless.memory import RepoMemory
 from driftless.models import (
     Candidate,
     ChangeSet,
@@ -54,6 +55,9 @@ class AnalysisResult(BaseModel):
     missing: list[MissingDoc]
     code: CodeIndex  # facts at `ref`, used by the verifier
     ref: str = ""  # commit docs and sources were read at: the merge commit, or the head pre-merge
+    memory: RepoMemory = Field(default_factory=RepoMemory)
+    # Ignore rules that kept something out of this run, in rule order (sections or example files).
+    ignored: list[str] = Field(default_factory=list)
 
     @property
     def snapshot_ref(self) -> str:
@@ -66,8 +70,14 @@ def analyze(
     top_k: int = 10,
     sources: list[SourceFile] | None = None,
     ref: str | None = None,
+    memory: RepoMemory | None = None,
 ) -> AnalysisResult:
-    """`sources` defaults to the PR's changed files when a full snapshot isn't available."""
+    """`sources` defaults to the PR's changed files when a full snapshot isn't available.
+
+    Sections matching the repo's ignore rules are never candidates; a rule counts as applied
+    only if it removed a section that would otherwise have been reviewed.
+    """
+    memory = memory or RepoMemory()
     if sources is None:
         sources = [
             SourceFile(path=f.path, content=f.after)
@@ -76,20 +86,30 @@ def analyze(
         ]
     changeset = build_changeset(pr.files)
     sections = index_documents(docs)
+    kept = [s for s in sections if memory.ignoring_rule(s) is None]
+    candidates = select_candidates(kept, changeset, top_k=top_k)
+    hit = {memory.ignoring_rule(c.section) for c in select_candidates(sections, changeset, top_k=top_k)} if memory.ignore else set()
     return AnalysisResult(
         pr=pr,
         changeset=changeset,
         docs=docs,
         sections=sections,
-        candidates=select_candidates(sections, changeset, top_k=top_k),
+        candidates=candidates,
         missing=find_missing_docs(sections, changeset),
         code=build_code_index(sources),
         ref=ref or pr.merge_commit_sha,
+        memory=memory,
+        ignored=[rule for rule in memory.ignore if rule in hit],
     )
 
 
 def analyze_pull_request(
-    provider: SourceProvider, repo_name: str, number: int, top_k: int = 10, pre_merge: bool = False
+    provider: SourceProvider,
+    repo_name: str,
+    number: int,
+    top_k: int = 10,
+    pre_merge: bool = False,
+    memory: RepoMemory | None = None,
 ) -> AnalysisResult:
     """Post-merge: docs and code at the merge commit. Pre-merge: at the PR head, i.e. the docs as
     they will be if this PR merges as-is (doc edits already in the PR count)."""
@@ -99,4 +119,4 @@ def analyze_pull_request(
     ref = pr.head_sha if pre_merge else pr.merge_commit_sha
     docs = provider.fetch_docs(repo_name, ref)
     sources = provider.fetch_sources(repo_name, ref)
-    return analyze(pr, docs, top_k=top_k, sources=sources, ref=ref)
+    return analyze(pr, docs, top_k=top_k, sources=sources, ref=ref, memory=memory)

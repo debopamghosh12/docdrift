@@ -1,8 +1,12 @@
-"""In-memory registry of webhook-triggered jobs (last N kept), one active job per PR and lane.
+"""Registry of webhook-triggered jobs (last N kept), one active job per PR and lane.
 
 Pre-merge and post-merge runs share a lane: a newer push (or the merge) supersedes a running
 pre-merge check, which stops at its next checkpoint without commenting. `/driftless apply`
-has its own lane, so it never cancels a check.
+has its own lane, so it never cancels a check. Memory commands (`/driftless ignore` ...) get a
+lane per comment: two different commands never dedupe, a redelivered one does.
+
+With a `JobLog` (the SQLite memory) every state change is saved, so the history survives a
+restart; jobs a previous process left queued or running are marked failed on startup.
 """
 
 import logging
@@ -12,7 +16,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from enum import Enum
-from typing import NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -27,6 +31,7 @@ class JobMode(str, Enum):
     PRE_MERGE = "pre-merge"
     POST_MERGE = "post-merge"
     APPLY = "apply"
+    MEMORY = "memory"  # `/driftless ignore|unignore|style|unstyle|memory`
 
 
 class JobStatus(str, Enum):
@@ -44,7 +49,9 @@ class Job(BaseModel):
     pr: int
     mode: JobMode = JobMode.POST_MERGE
     head_sha: str | None = None  # pre-merge: the pushed commit being checked
-    requested_by: str | None = None  # apply: who commented `/driftless apply`
+    requested_by: str | None = None  # apply / memory: who commented
+    command: str | None = None  # memory: the command, "/driftless ignore CHANGELOG.md"
+    comment_id: int | None = None  # memory: the comment it came from
     status: JobStatus = JobStatus.QUEUED
     queued_at: float
     started_at: float | None = None
@@ -77,6 +84,20 @@ class Syncer(Protocol):
 
     def apply(self, repo: str, number: int, user: str) -> PublishResult: ...
 
+    def remember(self, repo: str, number: int, user: str, command: str) -> PublishResult:
+        """Run a memory command and reply on the PR (write access only)."""
+        ...
+
+
+class JobLog(Protocol):
+    """Where jobs are persisted (implemented by memory.Memory)."""
+
+    def save_job(self, job_id: str, repo: str, pr: int, status: str, queued_at: float, data: dict[str, Any]) -> None: ...
+
+    def recent_jobs(self, limit: int = 20) -> list[dict[str, Any]]: ...
+
+    def interrupt_unfinished(self) -> int: ...
+
 
 class Enqueued(NamedTuple):
     job: Job
@@ -85,11 +106,17 @@ class Enqueued(NamedTuple):
 
 
 class JobStore:
-    def __init__(self, syncer: Syncer, keep: int = 20) -> None:
+    def __init__(self, syncer: Syncer, keep: int = 20, log: JobLog | None = None) -> None:
         self._syncer = syncer
+        self._keep = keep
         self._jobs: deque[Job] = deque(maxlen=keep)
         self._active: dict[tuple[str, int, str], Job] = {}
         self._lock = threading.Lock()
+        self._log = log
+        if log is not None:
+            interrupted = log.interrupt_unfinished()
+            if interrupted:
+                logger.warning("marked %d job(s) from a previous run as interrupted", interrupted)
 
     def enqueue(
         self,
@@ -98,23 +125,27 @@ class JobStore:
         mode: JobMode = JobMode.POST_MERGE,
         head_sha: str | None = None,
         requested_by: str | None = None,
+        command: str | None = None,
+        comment_id: int | None = None,
     ) -> Enqueued:
         """A redelivery (same mode and head) gets the active job back; a newer push or the merge
         supersedes an active pre-merge check."""
-        key = _key(repo, pr, mode)
+        key = _key(repo, pr, mode, comment_id)
         with self._lock:
             active = self._active.get(key)
             if active and not _supersedes(active, mode, head_sha):
                 return Enqueued(active, False)
             job = Job(
-                id=uuid.uuid4().hex[:12], repo=repo, pr=pr, mode=mode,
-                head_sha=head_sha, requested_by=requested_by, queued_at=time.time(),
+                id=uuid.uuid4().hex[:12], repo=repo, pr=pr, mode=mode, head_sha=head_sha,
+                requested_by=requested_by, command=command, comment_id=comment_id, queued_at=time.time(),
             )
             if active:
                 active.supersede(job)
                 logger.info("job %s superseded by %s for %s#%d", active.id, job.id, repo, pr)
+                self._save(active)
             self._active[key] = job
             self._jobs.append(job)
+            self._save(job)
         logger.info("job %s queued (%s) for %s#%d", job.id, mode.value, repo, pr)
         return Enqueued(job, True, active)
 
@@ -124,6 +155,7 @@ class JobStore:
             if job.superseded:
                 raise SupersededError(f"superseded by {job.superseded_by} before it started")
             job.status = JobStatus.RUNNING
+            self._save(job)
             logger.info("job %s started (%s): %s#%d", job.id, job.mode.value, job.repo, job.pr)
             published = self._dispatch(job)
         except SupersededError as exc:
@@ -142,24 +174,39 @@ class JobStore:
         finally:
             job.finished_at = time.time()
             job.duration_s = round(job.finished_at - job.started_at, 2)
-            key = _key(job.repo, job.pr, job.mode)
+            key = _key(job.repo, job.pr, job.mode, job.comment_id)
             with self._lock:
                 if self._active.get(key) is job:  # a superseding job owns the slot now
                     del self._active[key]
+                self._save(job)
 
     def recent(self) -> list[Job]:
+        if self._log is not None:
+            return [Job.model_validate(data) for data in self._log.recent_jobs(self._keep)]
         with self._lock:
             return list(reversed(self._jobs))
+
+    def _save(self, job: Job) -> None:
+        if self._log is None:
+            return
+        try:
+            self._log.save_job(job.id, job.repo, job.pr, job.status.value, job.queued_at, job.model_dump(mode="json"))
+        except Exception:  # losing a history row must never fail the job
+            logger.exception("could not save job %s", job.id)
 
     def _dispatch(self, job: Job) -> PublishResult:
         if job.mode == JobMode.PRE_MERGE:
             return self._syncer.pre_merge(job.repo, job.pr, job.head_sha or "", lambda: job.superseded)
         if job.mode == JobMode.APPLY:
             return self._syncer.apply(job.repo, job.pr, job.requested_by or "")
+        if job.mode == JobMode.MEMORY:
+            return self._syncer.remember(job.repo, job.pr, job.requested_by or "", job.command or "")
         return self._syncer.post_merge(job.repo, job.pr)
 
 
-def _key(repo: str, pr: int, mode: JobMode) -> tuple[str, int, str]:
+def _key(repo: str, pr: int, mode: JobMode, comment_id: int | None = None) -> tuple[str, int, str]:
+    if mode == JobMode.MEMORY:
+        return repo.lower(), pr, f"memory:{comment_id}"
     return repo.lower(), pr, "apply" if mode == JobMode.APPLY else "sync"
 
 

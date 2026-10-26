@@ -48,6 +48,7 @@ class Analyzer:
         verifier = Verifier(result.code, changed_names(result.changeset))
 
         batches = batch_candidates(result.candidates)
+        proposals.guided_by_memory = result.memory.guides_the_model and bool(batches or result.missing)
         with ThreadPoolExecutor(max_workers=self._workers) as pool:
             outcomes = list(pool.map(lambda b: self._review(result, b, changes), batches))
         reviewed: list[tuple[Candidate, SectionVerdict]] = []
@@ -121,6 +122,7 @@ class Analyzer:
                 mentioned_in = [p for p, texts in written.items() if any(is_mentioned(t, item) for t in texts)]
                 fallback = fallback_file(item, result.sections, result.pr.files)
                 files = mentioned_in or ([fallback] if fallback else [])
+            files = [path for path in files if result.memory.ignoring_file_rule(path) is None]
             for path in files:
                 if any(is_mentioned(text, item) for text in written.get(path, [])):
                     proposals.covered.append(CoveredItem(item=item, file=path))

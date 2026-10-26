@@ -85,6 +85,6 @@ def test_rate_limiter_waits_for_window() -> None:
 def test_prompts_render_with_name_placeholder() -> None:
     text = render_prompt(
         "missing_doc", kind="route", name="PATCH /x", file="a.py", target_file="README.md", pr_title="t", changes="c",
-        hunks="h", outline="o", example_location="l", example="e",
+        hunks="h", outline="o", example_location="l", example="e", memory="",
     )
     assert "`PATCH /x`" in text and "$" not in text.split("## Pull request")[0]

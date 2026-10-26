@@ -12,6 +12,7 @@ $hunks
 ## Documentation sections
 $sections
 
+$memory
 Instructions:
 - Judge each section independently. A section is stale only if the code change makes something in it wrong, or makes a list or table in it incomplete (for example, a table of all environment variables or query parameters that is now missing a newly added one).
 - If a section is stale, its "updated_section" is the complete corrected section in Markdown, starting with its heading line. Keep every unaffected line identical. Change the heading only if the heading itself is now wrong.
