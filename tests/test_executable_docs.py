@@ -55,7 +55,7 @@ def test_wrong_documented_status_is_fixed_after_running() -> None:
     files, report = run(llm)
 
     assert outcomes(report) == [
-        ("README.md", "GET /greeting", ExampleStatus.PASSED),  # GREETING default from the docs table
+        ("README.md", "GET /greeting", ExampleStatus.PASSED),  # code default "unset" != docs "hello": a warning
         ("README.md", "POST /items", ExampleStatus.FIXED),
         ("README.md", "GET /items/1", ExampleStatus.PASSED),  # reads what the POST created
         ("docs/api.md", "GET /items/1", ExampleStatus.PASSED),  # fresh app per file: 404

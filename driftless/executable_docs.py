@@ -10,10 +10,11 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+from driftless.app_env import AppEnv, app_env
 from driftless.doc_editor import proposed_docs
 from driftless.doc_index import is_doc_path
 from driftless.example_fixer import ExampleFixer, route_code
-from driftless.examples import Example, documented_env_defaults, extract_examples
+from driftless.examples import Example, extract_examples
 from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.executor import ExampleRun, run_examples
 from driftless.llm import LLMError
@@ -46,7 +47,7 @@ class DocRunner:
         runnable = {path: text for path, text in sorted(docs.items()) if extract_examples(path, text)}
         if not runnable:
             return report
-        env = env_defaults({**{p: t for p, t in files.items() if is_doc_path(p)}, **docs})
+        env = app_env(files, {**{p: t for p, t in files.items() if is_doc_path(p)}, **docs})
         try:
             with self._sandbox as box:
                 report.app = box.target.spec if box.target else None
@@ -61,7 +62,7 @@ class DocRunner:
         return report
 
     def _execute_file(
-        self, box: Sandbox, path: str, text: str, files: dict[str, str], env: dict[str, str], report: ExecutionReport
+        self, box: Sandbox, path: str, text: str, files: dict[str, str], env: AppEnv, report: ExecutionReport
     ) -> None:
         first = self._run(box, path, text, env)
         runs = first
@@ -82,9 +83,9 @@ class DocRunner:
         for before, after in zip(first, runs):
             report.outcomes.append(_outcome(before, after, fixes.get(before.example.index, []), notes.get(before.example.index)))
 
-    def _run(self, box: Sandbox, path: str, text: str, env: dict[str, str]) -> list[ExampleRun]:
+    def _run(self, box: Sandbox, path: str, text: str, env: AppEnv) -> list[ExampleRun]:
         examples = extract_examples(path, text)
-        with box.serve(env) as base_url:
+        with box.serve(env.set, env.unset) as base_url:
             return run_examples(examples, base_url, timeout=self._request_timeout)
 
     def _fix(
@@ -119,14 +120,6 @@ class DocRunner:
         for example, new_lines in sorted(replacements, key=lambda r: r[0].start_line, reverse=True):
             lines[example.start_line : example.end_line] = new_lines
         return "\n".join(lines), bool(replacements)
-
-
-def env_defaults(docs: dict[str, str]) -> dict[str, str]:
-    """Env var defaults documented anywhere in the docs (tables with a "Default" column)."""
-    defaults: dict[str, str] = {}
-    for _, text in sorted(docs.items()):
-        defaults.update(documented_env_defaults(text))
-    return defaults
 
 
 def _overlaps_another(example: Example, examples: list[Example]) -> bool:

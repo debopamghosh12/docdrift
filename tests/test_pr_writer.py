@@ -72,7 +72,7 @@ class FakeGitHub:
         self.comments[comment_id] = CommentRef(id=comment_id, body=body, url=url)
         return url
 
-    def edit_comment(self, repo: str, comment_id: int, body: str) -> str:
+    def edit_comment(self, repo: str, number: int, comment_id: int, body: str) -> str:
         self.comments[comment_id] = self.comments[comment_id].model_copy(update={"body": body})
         return self.comments[comment_id].url
 

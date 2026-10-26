@@ -39,6 +39,7 @@ class ExampleOutcome(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     fixes: list[str] = Field(default_factory=list)  # reason of every applied fix
     note: str | None = None  # why a failing example wasn't fixed
+    pre_existing: bool = False  # pre-merge: already failed at the PR's base commit
 
 
 class ExecutionReport(BaseModel):

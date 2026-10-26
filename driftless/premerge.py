@@ -58,7 +58,7 @@ class CheckRepo(Protocol):
 
     def create_comment(self, repo: str, number: int, body: str) -> str: ...
 
-    def edit_comment(self, repo: str, comment_id: int, body: str) -> str: ...
+    def edit_comment(self, repo: str, number: int, comment_id: int, body: str) -> str: ...
 
     def set_status(self, repo: str, sha: str, state: str, description: str, target_url: str | None = None) -> None: ...
 
@@ -93,7 +93,7 @@ class PreMergeChecker:
         fixes = final_docs(result.docs, proposals, min_confidence)
         body = render_premerge_comment(result, proposals, min_confidence, fixes)
         mine = next((c for c in self._gh.list_comments(pr.repo, pr.number) if premerge_marker(pr.number) in c.body), None)
-        url = self._gh.edit_comment(pr.repo, mine.id, body) if mine else self._gh.create_comment(pr.repo, pr.number, body)
+        url = self._gh.edit_comment(pr.repo, pr.number, mine.id, body) if mine else self._gh.create_comment(pr.repo, pr.number, body)
 
         check = summarize(proposals, min_confidence)
         self._gh.set_status(pr.repo, pr.head_sha, check.state, check.description, url)

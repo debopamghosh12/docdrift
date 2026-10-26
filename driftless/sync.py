@@ -73,6 +73,38 @@ def analyze_and_propose(
     return result, proposals
 
 
+def mark_baseline(
+    settings: Settings, client: "GitHubClient", result: "AnalysisResult", proposals: "DocProposals"
+) -> None:
+    """Pre-merge: flag drift that already existed at the PR's merge base (see baseline.py).
+
+    Runs the base's docs against the base's app (no fixer) only when the head had failing or
+    fixed examples, and indexes the base's code only when there are stale sections to classify.
+    """
+    from pathlib import Path
+
+    from driftless.baseline import mark_pre_existing, needs_baseline
+    from driftless.code_index import build_code_index
+    from driftless.executable_docs import execute_docs
+
+    examples, sections = needs_baseline(proposals)
+    if not (examples or sections):
+        return
+    repo, base = result.pr.repo, result.pr.merge_base_sha
+    base_docs = client.fetch_docs(repo, base)
+    base_execution = None
+    if examples and settings.execute_examples:
+        base_execution = execute_docs(
+            client.fetch_files(repo, base),
+            {d.path: d.content for d in base_docs},
+            None,
+            Path(settings.sandbox_cache_dir),
+            settings.sandbox_startup_timeout,
+        )
+    base_code = build_code_index(client.fetch_sources(repo, base)) if sections else None
+    mark_pre_existing(proposals, result.code, base_docs, base_code, base_execution)
+
+
 class GitHubSyncer:
     """Runs each webhook job mode against GitHub and the LLM.
 
@@ -109,6 +141,8 @@ class GitHubSyncer:
                 self._settings, client, llm, repo, number, self._min_confidence, self._top_k,
                 pre_merge=True, checkpoint=checkpoint,
             )
+            mark_baseline(self._settings, client, result, proposals)
+            checkpoint(result)
             published, fixes = checker.report(result, proposals, self._min_confidence)
         except SupersededError:
             raise  # the newer run owns the comment and the status

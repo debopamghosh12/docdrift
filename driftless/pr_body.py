@@ -30,6 +30,7 @@ class ChangeRow:
     confidence: float
     verification: Verification
     matched_terms: tuple[str, ...] = ()
+    pre_existing: bool = False
 
     @property
     def applied(self) -> bool:
@@ -46,7 +47,10 @@ def change_rows(proposals: DocProposals, min_confidence: float) -> list[ChangeRo
             path = f.section.heading_path
             section = " › ".join(path[1:] if len(path) > 1 else path) or f.section.heading
             rows.append(
-                ChangeRow(f.section.path, section, "updated", v.reason, v.confidence, f.verification, tuple(f.matched_terms))
+                ChangeRow(
+                    f.section.path, section, "updated", v.reason, v.confidence, f.verification,
+                    tuple(f.matched_terms), f.pre_existing,
+                )
             )
     for ins in proposals.insertions:
         p = ins.proposal
@@ -192,7 +196,7 @@ def render_execution(report: ExecutionReport) -> list[str]:
         ]
         parts += [
             f"| `{o.file}` | `{_cell(o.label)}` (line {o.line}) | {_expected_status(o)} "
-            f"| {_status(o.final_actual_status)} | {EXAMPLE_LABELS[o.status]} |"
+            f"| {_status(o.final_actual_status)} | {EXAMPLE_LABELS[o.status]}{' (pre-existing)' if o.pre_existing else ''} |"
             for o in report.outcomes
         ]
     if report.fixed:
@@ -201,12 +205,13 @@ def render_execution(report: ExecutionReport) -> list[str]:
             f"- `{o.file}` › `{o.label}`: {_cell('; '.join(o.fixes))} (was: {_cell('; '.join(o.failures))})"
             for o in report.fixed
         ]
-    if report.failing:
+    failing = [o for o in report.failing if not o.pre_existing]  # pre-existing ones are listed separately
+    if failing:
         parts += ["", "**❌ Still failing — please review before merging**", ""]
         parts += [
             f"- `{o.file}` › `{o.label}` (line {o.line}): {_cell('; '.join(o.failures))}"
             + (f" ({_cell(o.note)})" if o.note else "")
-            for o in report.failing
+            for o in failing
         ]
     warned = [o for o in report.outcomes if o.warnings]
     if warned:

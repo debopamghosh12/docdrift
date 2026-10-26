@@ -6,6 +6,7 @@ import pytest
 import driftless.github_writer
 import driftless.sync
 from driftless.config import Settings
+from driftless.models import DocFile, SourceFile
 from driftless.pipeline import AnalysisResult
 from driftless.pr_writer import PublishAction
 from driftless.premerge import SupersededError
@@ -34,16 +35,40 @@ class FakeAnalysis:
         return analysis, self.result(head)
 
 
+class FakeBaseClient:
+    """The PR's merge base: no docs or sources unless a test sets them."""
+
+    def __init__(self) -> None:
+        self.docs: list[DocFile] = []
+        self.sources: list[SourceFile] = []
+        self.refs: list[str] = []
+
+    def fetch_docs(self, repo: str, ref: str) -> list[DocFile]:
+        self.refs.append(ref)
+        return self.docs
+
+    def fetch_sources(self, repo: str, ref: str) -> list[SourceFile]:
+        return self.sources
+
+    def fetch_files(self, repo: str, ref: str) -> dict[str, str]:
+        return {}
+
+
 @pytest.fixture
-def gh(monkeypatch: pytest.MonkeyPatch) -> FakeCheckRepo:
+def base() -> FakeBaseClient:
+    return FakeBaseClient()
+
+
+@pytest.fixture
+def gh(monkeypatch: pytest.MonkeyPatch, base: FakeBaseClient) -> FakeCheckRepo:
     fake = FakeCheckRepo()
     monkeypatch.setattr(driftless.github_writer, "GitHubWriter", lambda token: fake)
-    monkeypatch.setattr(driftless.sync, "_clients", lambda settings: (None, None))
+    monkeypatch.setattr(driftless.sync, "_clients", lambda settings: (base, None))
     return fake
 
 
 def syncer() -> GitHubSyncer:
-    return GitHubSyncer(Settings(_env_file=None, github_token="t", llm_api_key="k"))
+    return GitHubSyncer(Settings(_env_file=None, github_token="t", llm_api_key="k", execute_examples=False))
 
 
 def test_pre_merge_sets_pending_then_the_result(gh: FakeCheckRepo, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,3 +133,11 @@ def test_apply_rechecks_when_the_head_moved_since_the_comment(
     [(_, (parent, _))] = gh.commits.items()
     assert analysis.runs == [HEAD, "e" * 40]
     assert parent == "e" * 40
+
+
+def test_pre_merge_reads_the_merge_base_for_pre_existing_drift(
+    gh: FakeCheckRepo, base: FakeBaseClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(driftless.sync, "analyze_and_propose", FakeAnalysis(gh, lambda head: proposals()))
+    syncer().pre_merge(REPO, 7, HEAD, lambda: False)
+    assert base.refs == ["a" * 40]  # the PR's merge base

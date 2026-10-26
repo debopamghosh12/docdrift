@@ -61,7 +61,7 @@ class DocsRepo(Protocol):
 
     def create_comment(self, repo: str, number: int, body: str) -> str: ...
 
-    def edit_comment(self, repo: str, comment_id: int, body: str) -> str: ...
+    def edit_comment(self, repo: str, number: int, comment_id: int, body: str) -> str: ...
 
 
 class PublishAction(str, Enum):
@@ -174,7 +174,7 @@ class PRWriter:
         comments = self._gh.list_comments(pr.repo, pr.number)
         mine = next((c for c in comments if has_source_marker(c.body, pr.number)), None)
         if mine:
-            url = self._gh.edit_comment(pr.repo, mine.id, body)
+            url = self._gh.edit_comment(pr.repo, pr.number, mine.id, body)
         else:
             url = self._gh.create_comment(pr.repo, pr.number, body)
         return PublishResult(action=PublishAction.COMMENTED, url=url, skipped_files=skipped or [])

@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -94,13 +94,17 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def sandbox_env(defaults: dict[str, str]) -> dict[str, str]:
+def sandbox_env(values: dict[str, str], unset: Collection[str] = ()) -> dict[str, str]:
+    """The host environment minus credentials and `unset` (variables the app reads), plus `values`."""
+    dropped = {name.upper() for name in unset}
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in _DROPPED_ENV and not any(marker in k.upper() for marker in _SECRET_MARKERS)
+        if k not in _DROPPED_ENV
+        and k.upper() not in dropped
+        and not any(marker in k.upper() for marker in _SECRET_MARKERS)
     }
-    env.update(defaults)
+    env.update(values)
     env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     return env
 
@@ -195,7 +199,7 @@ class Sandbox:
             self._workdir = None
 
     @contextmanager
-    def serve(self, env: dict[str, str] | None = None) -> Iterator[str]:
+    def serve(self, env: dict[str, str] | None = None, unset: Collection[str] = ()) -> Iterator[str]:
         """Start a fresh app instance; yield its base URL; always kill it afterwards."""
         assert self._workdir is not None and self.target is not None and self._python is not None
         port = free_port()
@@ -209,7 +213,7 @@ class Sandbox:
             process = subprocess.Popen(
                 command,
                 cwd=self._workdir,
-                env=sandbox_env(env or {}),
+                env=sandbox_env(env or {}, unset),
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,

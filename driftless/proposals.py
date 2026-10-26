@@ -67,6 +67,7 @@ class StaleFinding(BaseModel):
     matched_terms: list[str]
     verdict: SectionVerdict
     verification: Verification | None = None  # None when not stale or below confidence
+    pre_existing: bool = False  # pre-merge: the section was already wrong at the PR's base commit
 
 
 class Insertion(BaseModel):

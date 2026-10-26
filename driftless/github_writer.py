@@ -62,8 +62,9 @@ class GitHubWriter:
     def create_comment(self, repo: str, number: int, body: str) -> str:
         return self._repo(repo).get_issue(number).create_comment(body).html_url
 
-    def edit_comment(self, repo: str, comment_id: int, body: str) -> str:
-        comment = self._repo(repo).get_issue_comment(comment_id)
+    def edit_comment(self, repo: str, number: int, comment_id: int, body: str) -> str:
+        # Repository has no get_issue_comment in PyGithub 2.x; comments are reached through their issue.
+        comment = self._repo(repo).get_issue(number).get_comment(comment_id)
         comment.edit(body)
         return comment.html_url
 

@@ -4,9 +4,18 @@ import re
 from dataclasses import dataclass
 
 from driftless.doc_editor import unified_diff
-from driftless.execution import ExecutionReport
+from driftless.execution import ExampleOutcome, ExampleStatus, ExecutionReport
 from driftless.pipeline import AnalysisResult
-from driftless.pr_body import FOOTER, _cell, _first_sentence, _plural, change_rows, render_execution, status_label
+from driftless.pr_body import (
+    FOOTER,
+    ChangeRow,
+    _cell,
+    _first_sentence,
+    _plural,
+    change_rows,
+    render_execution,
+    status_label,
+)
 from driftless.proposals import DocProposals
 
 APPLY_COMMAND = "/driftless apply"
@@ -21,9 +30,10 @@ def premerge_marker(number: int) -> str:
 
 @dataclass(frozen=True)
 class CheckSummary:
-    stale: int  # sections that need a change: rewrites, new sections, examples fixed after running
-    failing: int  # examples that still fail
+    stale: int  # sections this PR makes stale: rewrites, new sections, examples fixed after running
+    failing: int  # examples this PR breaks that still fail
     errors: int  # reviews that could not finish (LLM errors)
+    pre_existing: int = 0  # already wrong at the base commit: shown, never counted against the PR
 
     @property
     def state(self) -> str:
@@ -36,7 +46,8 @@ class CheckSummary:
     def description(self) -> str:
         """Commit status description (GitHub allows 140 characters)."""
         if self.state == "success":
-            return "Docs are in sync with this PR"
+            already = f" ({_plural(self.pre_existing, 'pre-existing issue')} on the base branch)" if self.pre_existing else ""
+            return f"Docs are in sync with this PR{already}"
         if self.state == "error":
             return f"Could not finish checking the docs ({_plural(self.errors, 'error')})"
         parts = []
@@ -47,12 +58,37 @@ class CheckSummary:
         return ", ".join(parts)
 
 
-def summarize(proposals: DocProposals, min_confidence: float) -> CheckSummary:
+@dataclass(frozen=True)
+class Drift:
+    """Stale sections and broken examples, split into the PR's own and pre-existing ones."""
+
+    rows: list[ChangeRow]
+    fixed: list[ExampleOutcome]
+    failing: list[ExampleOutcome]
+
+
+def split_drift(proposals: DocProposals, min_confidence: float) -> tuple[Drift, Drift]:
+    """(introduced by this PR, already there at the base commit)."""
+    rows = change_rows(proposals, min_confidence)
     execution = proposals.execution or ExecutionReport()
+
+    def part(pre_existing: bool) -> Drift:
+        return Drift(
+            rows=[r for r in rows if r.pre_existing == pre_existing],
+            fixed=[o for o in execution.fixed if o.pre_existing == pre_existing],
+            failing=[o for o in execution.failing if o.pre_existing == pre_existing],
+        )
+
+    return part(False), part(True)
+
+
+def summarize(proposals: DocProposals, min_confidence: float) -> CheckSummary:
+    introduced, pre_existing = split_drift(proposals, min_confidence)
     return CheckSummary(
-        stale=len(change_rows(proposals, min_confidence)) + len(execution.fixed),
-        failing=len(execution.failing),
+        stale=len(introduced.rows) + len(introduced.fixed),
+        failing=len(introduced.failing),
         errors=len(proposals.errors),
+        pre_existing=len(pre_existing.rows) + len(pre_existing.fixed) + len(pre_existing.failing),
     )
 
 
@@ -62,18 +98,21 @@ def render_premerge_comment(
     """`fixes`: the verified new content of every doc file `/driftless apply` would commit."""
     pr = result.pr
     check = summarize(proposals, min_confidence)
+    introduced, pre_existing = split_drift(proposals, min_confidence)
     execution = proposals.execution
     sha = pr.head_sha[:7]
     parts = [premerge_marker(pr.number)]
 
     if check.state == "success":
         ran = f" {_examples(execution.total, 'pass')} against the app." if execution and execution.total else ""
+        if check.pre_existing:
+            ran = f" {_plural(check.pre_existing, 'issue')} already on `{pr.base_ref}` are listed below."
         parts += [
             "## ✅ Docs are in sync with this PR",
             "",
             f"Driftless checked {_plural(len(result.candidates), 'related section')} across "
-            f"{_plural(len(result.docs), 'doc file')} at `{sha}`: nothing is stale and no new interface "
-            f"is undocumented.{ran}",
+            f"{_plural(len(result.docs), 'doc file')} at `{sha}`: nothing this PR changes is stale and no new "
+            f"interface is undocumented.{ran}",
         ]
     elif check.stale:
         parts += [
@@ -86,7 +125,19 @@ def render_premerge_comment(
     else:
         parts += ["## ⚠️ Driftless could not finish checking the docs", ""]
 
-    parts += _stale_table(proposals, min_confidence)
+    parts += _drift_table(introduced)
+    if pre_existing.rows or pre_existing.fixed or pre_existing.failing:
+        parts += [
+            "",
+            "<details>",
+            f"<summary>Already stale on {pr.base_ref}, not caused by this PR ({check.pre_existing})</summary>",
+            "",
+            f"These were already wrong at the base commit `{pr.merge_base_sha[:7]}`, so they don't fail this "
+            "check. Their fixes are still in the diff below.",
+            *_drift_table(pre_existing),
+            "",
+            "</details>",
+        ]
     parts += _diffs(result, fixes)
     if execution:
         parts += ["", *render_execution(execution)]
@@ -113,20 +164,18 @@ def render_apply_declined(user: str, reason: str) -> str:
     return f"⚠️ @{user} Driftless did not apply the doc fixes: {reason}\n\n---\n{FOOTER}\n"
 
 
-def _stale_table(proposals: DocProposals, min_confidence: float) -> list[str]:
-    rows = change_rows(proposals, min_confidence)
-    fixed = proposals.execution.fixed if proposals.execution else []
-    if not rows and not fixed:
+def _drift_table(drift: Drift) -> list[str]:
+    if not (drift.rows or drift.fixed or drift.failing):
         return []
     lines = ["", "| File | Section | Why | Proposed fix |", "|------|---------|-----|--------------|"]
     lines += [
         f"| `{r.file}` | {_cell(r.section)} | {_cell(_first_sentence(r.why))} | {r.change}: {_cell(status_label(r.verification))} |"
-        for r in rows
+        for r in drift.rows
     ]
     lines += [
         f"| `{o.file}` | example `{_cell(o.label)}` (line {o.line}) | fails when run: {_cell('; '.join(o.failures))} "
-        "| 🔁 fixed after running |"
-        for o in fixed
+        f"| {'🔁 fixed after running' if o.status == ExampleStatus.FIXED else '❌ no fix found'} |"
+        for o in [*drift.fixed, *drift.failing]
     ]
     return lines
 
