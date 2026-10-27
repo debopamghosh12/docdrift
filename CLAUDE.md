@@ -89,5 +89,5 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 ## Rules
 - Small, readable modules; type hints everywhere; no giant files.
 - After each working step: `git commit` with a conventional message (`feat:`, `fix:`, `docs:`, `test:`, `chore:`) and `git push`.
-- Maintain `## Decision log` in README.md — append a short entry (what we chose and why) for every real design decision.
+- Maintain the decision log in DECISIONS.md — append a short entry (what we chose and why) for every real design decision.
 - Never hardcode secrets; use `.env` + `.env.example`.
