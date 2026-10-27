@@ -5,7 +5,6 @@ the page polls `GET /jobs/{id}` for its stage and result. On the public demo, ev
 writes to GitHub requires an admin session, and job starts go through the demo's limits.
 """
 
-import re
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
@@ -14,12 +13,13 @@ from github import GithubException
 
 from driftless.commands import CommandName, parse_command
 from driftless.jobs import Enqueued, JobMode
+from driftless.trust import valid_ref
 from driftless.web.job_panel import job_context
 from driftless.web.pages import memory_context, setup_context
 from driftless.web.state import WebState
 
 WEB_USER = "web"  # created_by of memory rules added from the web app
-_REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def action_routes(state: WebState) -> APIRouter:
@@ -38,7 +38,7 @@ def action_routes(state: WebState) -> APIRouter:
     ) -> HTMLResponse:
         repo = state.repo(owner, name)
         ref = ref.strip() or repo.default_branch
-        if not _REF_RE.match(ref) or ".." in ref:
+        if not valid_ref(ref):  # the job then only runs a branch, tag or default-branch commit (trust.py)
             return notice(state, request, "That isn't a branch, tag or commit name.", 400)
         if not state.settings.execute_examples:
             return notice(state, request, "Running examples is turned off on this instance (EXECUTE_EXAMPLES=false).", 409)
@@ -149,7 +149,15 @@ def notice(state: WebState, request: Request, message: str, status_code: int) ->
 
 
 def same_origin(request: Request) -> None:
-    """Refuse cross-site form posts: a page elsewhere must not start runs on this server."""
+    """Refuse cross-site form posts: a page elsewhere must not start runs on this server.
+
+    Browsers send Sec-Fetch-Site (and Origin on every POST); a request with neither header isn't
+    from a browser, so it can't carry a victim's cookie for CSRF."""
+    if request.method in _SAFE_METHODS:
+        return
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site not in ("same-origin", "none"):
+        raise HTTPException(status_code=403, detail="cross-origin request refused")
     origin = request.headers.get("origin") or request.headers.get("referer")
     if origin and urlsplit(origin).netloc != request.headers.get("host", ""):
         raise HTTPException(status_code=403, detail="cross-origin request refused")

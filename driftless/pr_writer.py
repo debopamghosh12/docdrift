@@ -32,6 +32,8 @@ class CommentRef(BaseModel):
     id: int
     body: str
     url: str
+    author: str = ""
+    bot: bool = False  # posted by a GitHub App / github-actions[bot]
 
 
 class DocsRepo(Protocol):

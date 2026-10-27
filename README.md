@@ -211,7 +211,7 @@ driftless check --repo owner/name --fix                  # fix broken examples, 
 
 It exits with status 1 if any example is still failing, so it can gate CI. With `--fix`, the repaired files are committed to `driftless/fix-examples` and a PR is opened (or updated on reruns). As with docs PRs, a file that changed on the default branch since `--ref` is never overwritten.
 
-> **Security note.** Executable docs **run the repository's code on your machine**: its `requirements.txt` is installed and its app is started. Only use it on repositories you trust. The app runs as a normal subprocess, not in a container. It is bound to `127.0.0.1` and gets a copy of your environment with credentials stripped (any variable whose name contains `TOKEN`, `SECRET`, `PASSWORD` or `API_KEY`). It is always killed afterwards, process tree included. Running it in a Docker sandbox with no network or host access is future work.
+> **Security note.** Executable docs **run the repository's code on your machine**: its `requirements.txt` is installed and its app is started. Only code someone with write access put in the repository is ever run: a branch, tag or default-branch commit, a merged PR, or a same-repo PR whose author has write access. Never a fork's code. Requirements are installed from wheels only (plain `package==version` lines; no `-r`, URLs or paths). The app is a subprocess bound to `127.0.0.1` with an allow-listed environment (never your credentials), and its process tree is always killed afterwards. In the Docker image it also runs as an unprivileged `sandbox` user that can't read the server's secrets. See [SECURITY.md](SECURITY.md) for the threat model and the residual risks.
 
 ## Running as a GitHub webhook
 
@@ -352,7 +352,7 @@ Everything above also works from the browser, with no CLI. `driftless serve` ser
    - **Activity.** The repo's job history from SQLite (mode, PR or ref, status, duration, links, errors), refreshed every 3 seconds.
    - **Setup.** Whether `GITHUB_TOKEN`, `WEBHOOK_SECRET` and `LLM_API_KEY` are set (never their values), and whether a webhook delivers pull requests and issue comments as JSON. **Connect webhook** creates one for a public payload URL you enter (e.g. a smee channel), signed with `WEBHOOK_SECRET`. The token needs **Webhooks: read and write**. If GitHub refuses, the manual steps from [Running as a GitHub webhook](#running-as-a-github-webhook) are shown instead.
 
-Long runs are always background jobs in the webhook's job store, so a request never waits on the LLM or the sandbox. A second **Run check** of the same ref while one is running shows that run instead of starting another. Pages never show secrets: payload URLs show only their host, and job errors are scrubbed of the token, webhook secret and LLM key. All repo content is HTML-escaped. Form posts from another origin are refused, so a page elsewhere can't start runs on your server. `EXECUTE_EXAMPLES=false` disables **Run check**, and the security note under [Docs health audit](#docs-health-audit) applies here too.
+Long runs are always background jobs in the webhook's job store, so a request never waits on the LLM or the sandbox. A second **Run check** of the same ref while one is running shows that run instead of starting another. Pages never show secrets: payload URLs show only their host, and job errors are scrubbed of the token, webhook secret, LLM key and admin token. All repo content is HTML-escaped. Form posts from another origin are refused, so a page elsewhere can't start runs on your server. `EXECUTE_EXAMPLES=false` disables **Run check**, and the security note under [Docs health audit](#docs-health-audit) applies here too.
 
 ## Deploy your own (Render)
 
@@ -372,17 +372,19 @@ To try the image locally: `docker build -t driftless . && docker run --rm -p 800
 
 ## Security notes
 
-- **Executable docs run the repository's code** on the machine running Driftless (your laptop, the server, or the Actions runner). Only enable repos you trust: see the [security note](#docs-health-audit) above. The app is a subprocess bound to `127.0.0.1`. Every variable whose name contains `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY` or `PRIVATE_KEY` is removed from its environment, and its whole process tree is killed afterwards.
+Full threat model, protections and residual risks: [SECURITY.md](SECURITY.md).
+
+- **Executable docs run the repository's code**, but only code from someone with write access: never a fork PR's head or a fork commit, in any mode. See the [security note](#docs-health-audit) above.
 - **Webhooks** are accepted only with a valid `X-Hub-Signature-256` (HMAC-SHA256 with `WEBHOOK_SECRET`). Without a secret, every delivery is rejected.
 - **Writes need write access.** `/driftless apply` and the memory commands check the commenter's permission with the collaborator API, and apply only fast-forwards same-repo branches.
-- **The web app** serves only `ALLOWED_REPOS`, HTML-escapes all repo content, never shows secrets (errors and `/runs` are scrubbed of the token, webhook secret and LLM key), and refuses cross-origin form posts. On the [public demo](#deploy-your-own-render), every write to GitHub needs an admin session.
+- **The web app** serves only `ALLOWED_REPOS`, HTML-escapes all repo content, never shows secrets (errors and `/runs` are scrubbed of the token, webhook secret, LLM key and admin token), refuses cross-site form posts, and sends CSP, frame and HSTS headers. On the [public demo](#deploy-your-own-render), every write to GitHub needs an admin session.
 - **Secrets** come from the environment or a gitignored `.env`, never from the repo.
 
 ## Limitations
 
 - Executable docs need a **FastAPI** app (a module-level `app = FastAPI(...)`) and examples written as `curl` in shell blocks or raw `http` blocks aimed at `localhost`. Examples with shell variables (`$TOKEN`) or other hosts are skipped.
 - Symbol extraction is exact for Python (`ast`) and regex-based for JS/TS.
-- The sandbox is a subprocess, not a container.
+- The sandbox is a subprocess (an unprivileged user in Docker), not a container: it has network access. See [SECURITY.md](SECURITY.md).
 - The LLM is paced to Groq's free tier (8000 tokens/minute), so a large PR takes a while.
 - In Action mode nothing persists between runs: memory lives in `.driftless.yml`, and docs-PR feedback isn't kept. On the free Render plan, history and memory reset on every redeploy.
 - The pre-merge result is a commit status, not a Checks API run, so a personal token is enough. It has no annotations.

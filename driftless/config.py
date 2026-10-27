@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     sandbox_startup_timeout: float = 30.0
     sandbox_install_timeout: float = 600.0
     example_request_timeout: float = 10.0
+    # Linux, server running as root: installs and apps under test run as this unprivileged user
+    # (the Docker image sets it). Empty: they run as the server's own user (see SECURITY.md).
+    sandbox_user: str = ""
 
 
 @lru_cache

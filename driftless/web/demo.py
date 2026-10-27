@@ -23,6 +23,7 @@ from driftless.jobs import Admit, Job, JobRefused
 
 ADMIN_COOKIE = "driftless_admin"
 SESSION_TTL_S = 12 * 3600
+MAX_TRACKED_KEYS = 10_000
 ADMIN_ONLY = "Admin only on the public demo"
 
 
@@ -84,6 +85,9 @@ class RateLimiter:
 
     def hit(self, key: str) -> None:
         with self._lock:
+            if len(self._hits) > MAX_TRACKED_KEYS:  # keys are otherwise only dropped when seen again
+                for stale in list(self._hits):
+                    self._prune(stale)
             self._prune(key)
             self._hits[key].append(self._clock())
 
@@ -105,6 +109,7 @@ class DemoGuard:
         self.sessions = AdminSessions(settings.admin_token)
         self.starts = RateLimiter(settings.demo_rate_limit, settings.demo_rate_window_s)
         self.logins = RateLimiter(5, 600)  # failed admin logins per IP
+        self.all_logins = RateLimiter(30, 600)  # failed admin logins from everyone (rotating IPs)
         self._max_jobs = settings.demo_max_jobs
         self._max_per_repo = settings.demo_max_jobs_per_repo
         self._ip_header = settings.client_ip_header

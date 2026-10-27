@@ -352,6 +352,7 @@ def execute_docs(
         python=python,
         startup_timeout=limits.startup_timeout,
         install_timeout=limits.install_timeout,
+        user=limits.user,
     )
     return DocRunner(sandbox, fixer, request_timeout=limits.request_timeout, progress=progress).execute(docs, files)
 

@@ -71,7 +71,12 @@ def run(
         result = analyze_pull_request(client, repo, pr, top_k=top, memory=memory.repo_memory(repo))
     render_analysis(result, console)
     proposals = _propose(result, llm, min_confidence, console)
-    if execute and settings.execute_examples:
+    from driftless.trust import pull_execution_refusal
+
+    refusal = pull_execution_refusal(result.pr, client.permission) if execute and settings.execute_examples else None
+    if refusal:
+        console.print(f"[yellow]Examples were not run: {refusal}.[/]")
+    elif execute and settings.execute_examples:
         files = client.fetch_files(repo, result.snapshot_ref)
         proposals.execution = _execute_all(result, proposals, files, llm, min_confidence, settings, console)
     from driftless.feedback import remembered_line
@@ -105,9 +110,14 @@ def _exit_on_errors(console: Console) -> Iterator[None]:
 
     from driftless.github_client import PullRequestNotMergedError
     from driftless.pipeline import OwnPullRequestError
+    from driftless.snapshot import SnapshotError
+    from driftless.trust import UntrustedCode
 
     try:
         yield
+    except (UntrustedCode, SnapshotError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
     except OwnPullRequestError as exc:
         console.print(f"[yellow]{exc}[/]")
         raise typer.Exit(code=0) from exc
@@ -191,7 +201,7 @@ def check(
 ) -> None:
     """Docs health audit: run every example in the repo's docs against its app and report pass/fail.
 
-    Runs the repository's code locally; only use it on repositories you trust.
+    Runs the repository's code locally: only a branch, tag or default-branch commit of the repo.
     """
     from driftless.audit import AuditConfigError, run_audit
     from driftless.config import get_settings
@@ -338,10 +348,13 @@ def serve(
 ) -> None:
     """Start the webhook server and the web app (/, POST /webhook, GET /health, GET /runs)."""
     import logging
+    import os
 
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if os.name != "nt":
+        os.umask(0o077)  # the job database and caches stay unreadable to the sandbox user
     uvicorn.run("driftless.server:create_app", factory=True, host=host, port=port)
 
 

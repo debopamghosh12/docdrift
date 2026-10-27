@@ -78,6 +78,40 @@ class GitHubClient:
         """The whole snapshot at `ref` (docs, sources, requirements/config), to start the app from."""
         return dict(self._snapshot(repo_name, ref))
 
+    def permission(self, repo_name: str, user: str) -> str:
+        """admin / maintain / write / triage / read / none (see trust.py)."""
+        if not user:
+            return "none"
+        try:
+            return self._repo(repo_name).get_collaborator_permission(user)
+        except GithubException:
+            return "none"
+
+    def branch_sha(self, repo_name: str, branch: str) -> str | None:
+        try:
+            return self._repo(repo_name).get_branch(branch).commit.sha
+        except GithubException:
+            return None
+
+    def tag_sha(self, repo_name: str, tag: str) -> str | None:
+        try:
+            ref = self._repo(repo_name).get_git_ref(f"tags/{tag}")
+        except GithubException:
+            return None
+        if ref.object.type == "tag":  # annotated: the tag object points at the commit
+            return self._repo(repo_name).get_git_tag(ref.object.sha).object.sha
+        return ref.object.sha
+
+    def on_default_branch(self, repo_name: str, sha: str) -> str | None:
+        repo = self._repo(repo_name)
+        try:
+            comparison = repo.compare(sha, repo.default_branch)
+        except GithubException:
+            return None
+        if comparison.status not in ("ahead", "identical"):
+            return None
+        return comparison.base_commit.sha
+
     def _snapshot(self, repo_name: str, ref: str) -> dict[str, str]:
         key = (repo_name, ref)
         if key not in self._snapshots:

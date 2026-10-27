@@ -29,7 +29,7 @@ class FakeCheckRepo:
     def create_comment(self, repo: str, number: int, body: str) -> str:
         comment_id = len(self.comments) + 1
         url = f"https://github.com/{repo}/pull/{number}#issuecomment-{comment_id}"
-        self.comments[comment_id] = CommentRef(id=comment_id, body=body, url=url)
+        self.comments[comment_id] = CommentRef(id=comment_id, body=body, url=url, author="driftless[bot]", bot=True)
         return url
 
     def edit_comment(self, repo: str, number: int, comment_id: int, body: str) -> str:

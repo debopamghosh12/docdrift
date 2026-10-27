@@ -53,6 +53,7 @@ class WebState:
 
     def render(self, request: Request, template: str, status_code: int = 200, **context: Any) -> HTMLResponse:
         context.setdefault("demo", self.demo.context(request))
+        context.setdefault("csp_nonce", getattr(request.state, "csp_nonce", ""))
         return self.templates.TemplateResponse(request, template, context, status_code=status_code)
 
 

@@ -7,6 +7,8 @@ from driftless.web.actions import same_origin
 from driftless.web.demo import ADMIN_COOKIE, client_ip
 from driftless.web.state import WebState
 
+ALL = "*"  # the key of the instance-wide failed-login limit
+
 
 def admin_routes(state: WebState) -> APIRouter:
     router = APIRouter(default_response_class=HTMLResponse)
@@ -21,11 +23,12 @@ def admin_routes(state: WebState) -> APIRouter:
         if not demo.sessions.enabled:
             return state.render(request, "admin.html", 409, enabled=False)
         ip = client_ip(request, state.settings.client_ip_header)
-        if demo.logins.retry_after(ip):
+        if demo.logins.retry_after(ip) or demo.all_logins.retry_after(ALL):
             error = "Too many failed attempts from your address. Try again in a few minutes."
             return state.render(request, "admin.html", 429, enabled=True, error=error)
         if not demo.sessions.check_token(token.strip()):
             demo.logins.hit(ip)
+            demo.all_logins.hit(ALL)
             return state.render(request, "admin.html", 401, enabled=True, error="That isn't the admin token.")
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(

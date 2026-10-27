@@ -84,8 +84,10 @@ def test_edit_comment_goes_through_the_issue(gh: Mocks) -> None:
 def test_comments(gh: Mocks) -> None:
     comment = gh[IssueComment]
     comment.id, comment.body, comment.html_url = 3, "hi", "u"
+    comment.user.login, comment.user.type = "github-actions[bot]", "Bot"
     gh[Issue].get_comments.side_effect = lambda: [comment]
-    assert [(c.id, c.body) for c in writer().list_comments("me/app", 7)] == [(3, "hi")]
+    listed = writer().list_comments("me/app", 7)
+    assert [(c.id, c.body, c.author, c.bot) for c in listed] == [(3, "hi", "github-actions[bot]", True)]
     writer().create_comment("me/app", 7, "body")
     gh[Issue].create_comment.assert_called_once_with("body")
 

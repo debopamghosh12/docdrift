@@ -50,15 +50,18 @@ class AuditResult:
 def run_audit(
     settings: Settings, repo: str, ref: str, fix: bool = False, progress: StageProgress = silent
 ) -> AuditResult:
-    """Raises AuditConfigError when `fix` lacks a token or an LLM; GitHub/HTTP errors propagate."""
+    """Raises AuditConfigError when `fix` lacks a token or an LLM, UntrustedCode when `ref` isn't a
+    branch, tag or default-branch commit of `repo` (see trust.py); GitHub/HTTP errors propagate."""
     from driftless.executable_docs import execute_docs
     from driftless.github_client import GitHubClient
+    from driftless.trust import resolve_trusted_ref
 
     fixer = _fixer(settings) if fix else None
     client = GitHubClient(settings.github_token or None)
     progress(Stage.FETCH, f"Downloading {repo}@{ref}...")
-    docs = client.fetch_docs(repo, ref)
-    files = client.fetch_files(repo, ref)
+    sha = resolve_trusted_ref(client, repo, ref)  # never a fork's commit served through this repo
+    docs = client.fetch_docs(repo, sha)
+    files = client.fetch_files(repo, sha)
     originals = {d.path: d.content for d in docs}
     progress(Stage.START, "Installing the app's dependencies (cached after the first run) and starting it...")
     report = execute_docs(

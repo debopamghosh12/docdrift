@@ -15,7 +15,14 @@ PREAMBLE = "(preamble)"
 def is_doc_path(path: str) -> bool:
     p = PurePosixPath(path)
     is_root_readme = len(p.parts) == 1 and p.name.lower() == "readme.md"
-    return is_root_readme or (p.parts[0] == "docs" and p.suffix.lower() == ".md")
+    return is_root_readme or (bool(p.parts) and p.parts[0] == "docs" and p.suffix.lower() == ".md")
+
+
+def is_safe_doc_path(path: str) -> bool:
+    """A doc path Driftless may write: README.md or docs/**/*.md, plain relative, no `..`."""
+    p = PurePosixPath(path)
+    plain = not p.is_absolute() and ".." not in p.parts and "\\" not in path and ":" not in path and "\0" not in path
+    return plain and is_doc_path(path)
 
 
 def index_documents(docs: list[DocFile]) -> list[DocSection]:

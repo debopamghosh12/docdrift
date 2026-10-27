@@ -3,6 +3,7 @@
 from github import Auth, Github, GithubException, InputGitTreeElement
 from github.Repository import Repository
 
+from driftless.doc_index import is_safe_doc_path
 from driftless.github_client import read_text
 from driftless.pr_writer import CommentRef, PullRequestRef
 from driftless.premerge import STATUS_CONTEXT, PullState
@@ -22,6 +23,9 @@ class GitHubWriter:
 
     def commit_files(self, repo: str, parent_sha: str, files: dict[str, str], message: str) -> str:
         # One commit via the Git Data API: a tree on top of the parent's tree, then the commit.
+        unsafe = sorted(path for path in files if not is_safe_doc_path(path))
+        if unsafe:  # whatever the model or a comment says, only README.md / docs/**/*.md are written
+            raise ValueError(f"refusing to commit non-doc paths: {unsafe}")
         r = self._repo(repo)
         parent = r.get_git_commit(parent_sha)
         elements = [InputGitTreeElement(path, "100644", "blob", content=text) for path, text in files.items()]
@@ -57,7 +61,13 @@ class GitHubWriter:
 
     def list_comments(self, repo: str, number: int) -> list[CommentRef]:
         issue = self._repo(repo).get_issue(number)
-        return [CommentRef(id=c.id, body=c.body or "", url=c.html_url) for c in issue.get_comments()]
+        return [
+            CommentRef(
+                id=c.id, body=c.body or "", url=c.html_url,
+                author=c.user.login if c.user else "", bot=bool(c.user and c.user.type == "Bot"),
+            )
+            for c in issue.get_comments()
+        ]
 
     def create_comment(self, repo: str, number: int, body: str) -> str:
         return self._repo(repo).get_issue(number).create_comment(body).html_url

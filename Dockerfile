@@ -9,7 +9,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Everything written at runtime lives under /tmp: the disk is ephemeral anyway.
     DATABASE_URL=sqlite:////tmp/driftless.db \
     SANDBOX_CACHE_DIR=/tmp/driftless_cache \
-    UV_CACHE_DIR=/tmp/uv-cache \
     UV_LINK_MODE=copy \
     PORT=8000
 
@@ -17,9 +16,12 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY driftless ./driftless
 # uv builds the venvs for the apps under test much faster than venv + pip.
-RUN pip install . uv && useradd --create-home --uid 10001 driftless
+# The server runs as root only so it can start each app under test as the unprivileged
+# `sandbox` user (SANDBOX_USER): that user can't read the server's /proc/<pid>/environ (its
+# secrets), its database or the locked venv cache. See SECURITY.md.
+RUN pip install . uv && useradd --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --uid 10002 sandbox
 
-USER driftless
+ENV SANDBOX_USER=sandbox
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"8000\")}/health', timeout=4)"

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from driftless.config import Settings
+from driftless.execution import ExecutionReport
 from driftless.memory import Memory, RepoMemory
 from driftless.pr_writer import PublishAction, PublishResult
 from driftless.premerge import PendingFixes, PullState, SupersededError
@@ -128,7 +129,10 @@ def analyze_and_propose(
     )
     proposals = Analyzer(llm).propose(result, min_confidence=min_confidence)
     checkpoint(result)
-    if settings.execute_examples:
+    refusal = execution_refusal(client, result) if settings.execute_examples else None
+    if refusal:
+        proposals.execution = ExecutionReport(errors=[f"Examples were not run: {refusal}."])
+    elif settings.execute_examples:
         from driftless.example_fixer import ExampleFixer
         from driftless.executable_docs import execute_all_docs
         from driftless.sandbox import SandboxLimits
@@ -145,6 +149,13 @@ def analyze_and_propose(
         )
         checkpoint(result)
     return result, proposals
+
+
+def execution_refusal(client: "GitHubClient", result: "AnalysisResult") -> str | None:
+    """Why the PR's snapshot must not be run (fork, or an author without write access); see trust.py."""
+    from driftless.trust import pull_execution_refusal
+
+    return pull_execution_refusal(result.pr, client.permission)
 
 
 def mark_baseline(

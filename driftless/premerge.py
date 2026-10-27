@@ -12,6 +12,7 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from driftless.doc_editor import final_docs
+from driftless.doc_index import is_safe_doc_path
 from driftless.pipeline import AnalysisResult
 from driftless.pr_writer import CommentRef, PublishAction, PublishResult
 from driftless.premerge_body import (
@@ -118,6 +119,8 @@ class PreMergeChecker:
         if stored is None or stored[0] != head_sha:
             return None
         _, commit, paths = stored
+        if not all(is_safe_doc_path(path) for path in paths):
+            return None  # only doc files are ever committed; re-check instead
         files: dict[str, str] = {}
         for path in paths:
             try:
@@ -130,7 +133,17 @@ class PreMergeChecker:
         return PendingFixes(head_sha=head_sha, files=files)
 
     def _comment(self, repo: str, number: int) -> CommentRef | None:
-        return next((c for c in self._gh.list_comments(repo, number) if premerge_marker(number) in c.body), None)
+        """Our comment: has the marker *and* was posted by a bot or someone with write access.
+        Anyone can paste the marker into a comment of their own, pointing `/driftless apply` at a
+        commit of theirs; such a comment is ignored."""
+        return next(
+            (
+                c for c in self._gh.list_comments(repo, number)
+                if premerge_marker(number) in c.body
+                and (c.bot or (c.author and self._gh.permission(repo, c.author) in WRITE_PERMISSIONS))
+            ),
+            None,
+        )
 
     def apply(
         self, repo: str, number: int, user: str, fixes_for: Callable[[PullState], PendingFixes]

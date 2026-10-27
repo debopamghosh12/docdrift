@@ -29,6 +29,7 @@ from driftless.memory import Memory
 from driftless.web import install_web
 from driftless.web.access import redact
 from driftless.web.github_browser import RepoBrowser
+from driftless.web.security import SecurityMiddleware
 
 logger = logging.getLogger("driftless.server")
 
@@ -57,7 +58,9 @@ def create_app(
         logger.warning("WEBHOOK_SECRET is not set; every webhook delivery will be rejected")
 
     store = JobStore(syncer, log=memory)
-    app = FastAPI(title="Driftless")
+    # No interactive API docs on a public server: the web app and /webhook are the interface.
+    app = FastAPI(title="Driftless", docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(SecurityMiddleware)
     app.state.jobs = store
     app.state.memory = memory
     app.state.web = install_web(app, settings, store, memory, browser)
@@ -68,7 +71,10 @@ def create_app(
 
     @app.get("/runs")
     def runs() -> list[Job]:
-        return [job.model_copy(update={"error": redact(job.error, settings) or None}) for job in store.recent()]
+        # On the public demo only the allow-listed repos' runs are listed, like everywhere else.
+        allowed = app.state.web.allowed
+        jobs = [job for job in store.recent() if not settings.public_demo or allowed.allows(job.repo)]
+        return [job.model_copy(update={"error": redact(job.error, settings) or None}) for job in jobs]
 
     @app.post("/webhook")
     async def webhook(

@@ -6,7 +6,9 @@ PATH, else `venv` + pip). Each `serve()` starts uvicorn on a free port and alway
 whole process tree afterwards (on Windows a venv's python.exe is a launcher with a child
 process, so killing the parent alone would leave the server running).
 
-This runs the repository's code on this machine: only use it on repositories you trust.
+This runs the repository's code on this machine: trust.py decides whose code that may be, and
+isolation.py keeps it away from Driftless's secrets (clean env, wheels-only installs, and on
+Linux an unprivileged SANDBOX_USER with process limits).
 """
 
 import ast
@@ -18,22 +20,22 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+from driftless.isolation import IsolationError, SandboxUser, active, clean_env, safe_requirements, sandbox_user
 
 if TYPE_CHECKING:
     from driftless.config import Settings
 
 IS_WINDOWS = os.name == "nt"
-# Env var names never passed to the app: our own credentials.
-_SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "PRIVATE_KEY")
-_DROPPED_ENV = ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")
 _PREFERRED_APP_FILES = ("main.py", "app.py", "server.py", "api.py", "asgi.py")
 
 
@@ -49,6 +51,7 @@ class SandboxLimits:
     startup_timeout: float = 30.0  # until the app answers HTTP
     install_timeout: float = 600.0  # building a venv for new requirements
     request_timeout: float = 10.0  # each documented request
+    user: str = ""  # SANDBOX_USER: run installs and the app as this user (Linux, server as root)
 
     @classmethod
     def from_settings(cls, settings: "Settings") -> "SandboxLimits":
@@ -57,6 +60,7 @@ class SandboxLimits:
             settings.sandbox_startup_timeout,
             settings.sandbox_install_timeout,
             settings.example_request_timeout,
+            settings.sandbox_user,
         )
 
 
@@ -117,60 +121,98 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def sandbox_env(values: dict[str, str], unset: Collection[str] = ()) -> dict[str, str]:
-    """The host environment minus credentials and `unset` (variables the app reads), plus `values`."""
-    dropped = {name.upper() for name in unset}
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in _DROPPED_ENV
-        and k.upper() not in dropped
-        and not any(marker in k.upper() for marker in _SECRET_MARKERS)
-    }
-    env.update(values)
-    env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
-    return env
+def sandbox_env(values: dict[str, str], unset: Collection[str] = (), home: Path | None = None) -> dict[str, str]:
+    """An allow-listed environment (never our credentials) minus `unset`, plus `values`."""
+    return clean_env(values, unset, home)
 
 
 def venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
 
 
-def ensure_venv(requirements: str, cache_dir: Path, timeout: float = 600) -> Path:
-    """Return the python of a cached venv with `requirements` + uvicorn installed."""
+_BUILD_LOCKS: dict[str, threading.Lock] = {}
+_BUILD_LOCKS_GUARD = threading.Lock()
+
+
+def ensure_venv(requirements: str, cache_dir: Path, timeout: float = 600, user: SandboxUser | None = None) -> Path:
+    """Return the python of a cached venv with `requirements` + uvicorn installed (wheels only).
+
+    With a sandbox `user`, the install runs as that user with a fresh HOME (no shared download
+    cache) and the finished venv is locked (root-owned, read-only), so one run can't plant code in
+    a venv a later run reuses. Builds of the same requirements are serialized."""
+    try:
+        requirements = safe_requirements(requirements)
+    except IsolationError as exc:
+        raise SandboxError(str(exc)) from exc
     version = f"{sys.version_info.major}.{sys.version_info.minor}"
     key = hashlib.sha256(f"{version}\n{requirements}".encode()).hexdigest()[:16]
-    venv = cache_dir / "venvs" / key
+    with _BUILD_LOCKS_GUARD:
+        build_lock = _BUILD_LOCKS.setdefault(key, threading.Lock())
+    with build_lock:
+        return _build_venv(requirements, cache_dir, key, timeout, user)
+
+
+def _build_venv(requirements: str, cache_dir: Path, key: str, timeout: float, user: SandboxUser | None) -> Path:
+    venvs = cache_dir / "venvs"
+    venv = venvs / key
     python = venv_python(venv)
     ready = venv / ".driftless-ready"
-    if ready.exists() and python.exists():
+    if ready.exists() and python.exists() and (user is None or ready.stat().st_uid == os.geteuid()):
         return python
     shutil.rmtree(venv, ignore_errors=True)  # a half-built venv from an interrupted run
-    venv.parent.mkdir(parents=True, exist_ok=True)
-    req_file = venv.parent / f"{key}-requirements.txt"
+    venvs.mkdir(parents=True, exist_ok=True)
+    req_file = venvs / f"{key}-requirements.txt"
     req_file.write_text(requirements + "\nuvicorn\n", encoding="utf-8")
+    home = Path(tempfile.mkdtemp(prefix="home-", dir=cache_dir))  # HOME (pip/uv caches) of this install only
+    extra: dict[str, Any] = {}
+    if user is not None:
+        for path in (cache_dir, venvs):
+            os.chmod(path, 0o755)  # traversable, but only root may create venvs in it
+        os.chmod(req_file, 0o644)
+        venv.mkdir()
+        user.give(venv)
+        user.give(home)
+        extra = user.popen_kwargs()
     uv = shutil.which("uv")
     if uv:
         steps = [
-            [uv, "venv", "--quiet", "--python", sys.executable, str(venv)],
-            [uv, "pip", "install", "--quiet", "--python", str(python), "-r", str(req_file)],
+            [uv, "venv", "--quiet", "--allow-existing", "--python", sys.executable, str(venv)],
+            [uv, "pip", "install", "--quiet", "--only-binary", ":all:", "--python", str(python), "-r", str(req_file)],
         ]
     else:
         steps = [
             [sys.executable, "-m", "venv", str(venv)],
-            [str(python), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", str(req_file)],
+            [
+                str(python), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--no-input",
+                "--only-binary=:all:", "-r", str(req_file),
+            ],
         ]
+    env = sandbox_env({"UV_LINK_MODE": "copy"}, home=home)
     deadline = time.monotonic() + timeout
-    for step in steps:
-        try:
-            subprocess.run(
-                step, check=True, capture_output=True, text=True, timeout=max(1.0, deadline - time.monotonic()),
-                env=sandbox_env({}),
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise SandboxError(f"installing requirements timed out after {timeout:.0f}s") from exc
-        except subprocess.CalledProcessError as exc:
-            raise SandboxError(f"{Path(step[0]).name} failed: {(exc.stderr or exc.stdout).strip()[-800:]}") from exc
+    active.enter()
+    try:
+        for step in steps:
+            try:
+                subprocess.run(
+                    user.limited(step, serve=False) if user else step,
+                    check=True, capture_output=True, text=True, timeout=max(1.0, deadline - time.monotonic()),
+                    env=env, stdin=subprocess.DEVNULL, **extra,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise SandboxError(f"installing requirements timed out after {timeout:.0f}s") from exc
+            except subprocess.CalledProcessError as exc:
+                raise SandboxError(f"{Path(step[0]).name} failed: {(exc.stderr or exc.stdout).strip()[-800:]}") from exc
+        if user is not None:
+            try:
+                user.lock(venv)
+            except (IsolationError, OSError) as exc:
+                raise SandboxError(f"could not lock the venv: {exc}") from exc
+    except BaseException:
+        shutil.rmtree(venv, ignore_errors=True)
+        raise
+    finally:
+        active.leave(user)
+        shutil.rmtree(home, ignore_errors=True)
     ready.write_text(requirements, encoding="utf-8")
     return python
 
@@ -185,24 +227,35 @@ class Sandbox:
         python: str | None = None,  # override the venv (tests use the current interpreter)
         startup_timeout: float = 30.0,
         install_timeout: float = 600.0,
+        user: str = "",  # SANDBOX_USER (see isolation.py)
     ) -> None:
         self._files = files
         self._cache_dir = cache_dir
         self._python = python
         self._startup_timeout = startup_timeout
         self._install_timeout = install_timeout
+        self._user_name = user
+        self._user: SandboxUser | None = None
         self.target = find_fastapi_app(files)
         self._workdir: Path | None = None
 
     def __enter__(self) -> "Sandbox":
         if self.target is None:
             raise SandboxError("no FastAPI app found (expected a module-level `app = FastAPI(...)`)")
+        try:
+            self._user = sandbox_user(self._user_name)
+        except IsolationError as exc:
+            raise SandboxError(str(exc)) from exc
         self._workdir = Path(tempfile.mkdtemp(prefix="driftless-sandbox-"))
         try:
             self._write_files(self._workdir.resolve())
+            if self._user is not None:
+                self._user.give(self._workdir)
             if self._python is None:
                 requirements = self._files.get("requirements.txt", "fastapi\n")
-                self._python = str(ensure_venv(requirements, self._cache_dir.resolve(), self._install_timeout))
+                self._python = str(
+                    ensure_venv(requirements, self._cache_dir.resolve(), self._install_timeout, self._user)
+                )
         except BaseException:
             self.__exit__()
             raise
@@ -210,6 +263,8 @@ class Sandbox:
 
     def _write_files(self, root: Path) -> None:
         for path, content in self._files.items():
+            if not safe_relative_path(path):
+                continue
             dest = (root / path).resolve()
             if not dest.is_relative_to(root):
                 continue  # never write outside the sandbox
@@ -232,22 +287,29 @@ class Sandbox:
             "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning",
             "--app-dir", str(self._workdir / self.target.app_dir),
         ]
-        with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-            process = subprocess.Popen(
-                command,
-                cwd=self._workdir,
-                env=sandbox_env(env or {}, unset),
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                **_new_process_group(),
-            )
-            try:
-                base_url = f"http://127.0.0.1:{port}"
-                self._wait_until_up(process, base_url, log_path)
-                yield base_url
-            finally:
-                kill_tree(process)
+        user = self._user
+        extra: dict[str, Any] = {**_new_process_group(), **(user.popen_kwargs() if user else {})}
+        active.enter()
+        try:
+            with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+                process = subprocess.Popen(
+                    user.limited(command, serve=True) if user else command,
+                    cwd=self._workdir,
+                    env=sandbox_env(env or {}, unset, home=self._workdir),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    close_fds=True,
+                    **extra,
+                )
+                try:
+                    base_url = f"http://127.0.0.1:{port}"
+                    self._wait_until_up(process, base_url, log_path)
+                    yield base_url
+                finally:
+                    kill_tree(process)
+        finally:
+            active.leave(user)  # the last one out kills daemons the app left behind
 
     def _wait_until_up(self, process: subprocess.Popen[bytes], base_url: str, log_path: Path) -> None:
         deadline = time.monotonic() + self._startup_timeout
@@ -260,6 +322,12 @@ class Sandbox:
             except httpx.HTTPError:
                 time.sleep(0.2)
         raise SandboxError(f"the app did not respond within {self._startup_timeout:.0f}s:\n{_tail(log_path)}")
+
+
+def safe_relative_path(path: str) -> bool:
+    """A plain relative POSIX path: not absolute, no `..`, no backslashes or drive letters."""
+    p = PurePosixPath(path)
+    return bool(path) and not p.is_absolute() and ".." not in p.parts and "\\" not in path and ":" not in path
 
 
 def _new_process_group() -> dict[str, object]:

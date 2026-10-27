@@ -41,7 +41,7 @@ def redact(text: str | None, settings: Settings) -> str:
     """Remove secret values from text shown in a page (errors can quote a request)."""
     if not text:
         return ""
-    for secret in (settings.github_token, settings.webhook_secret, settings.llm_api_key):
+    for secret in (settings.github_token, settings.webhook_secret, settings.llm_api_key, settings.admin_token):
         if secret and len(secret) >= 4:
             text = text.replace(secret, REDACTED)
     return text

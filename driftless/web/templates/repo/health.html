@@ -19,7 +19,7 @@
   </p>
   {% endif %}
   <p class="mt-4 text-xs leading-relaxed text-slate-500">
-    ⚠️ This runs the repository's code on this server: its <code class="code">requirements.txt</code> is installed into a cached venv and its app is started on 127.0.0.1 with credentials stripped from the environment, then killed. Only enable repos you trust.
+    ⚠️ This runs the repository's code on this server: its <code class="code">requirements.txt</code> is installed (wheels only) into a cached venv and its app is started on 127.0.0.1 without any of the server's credentials, then killed. Only branches, tags and default-branch commits of this repo are run, never a fork's code.
   </p>
 </section>
 
