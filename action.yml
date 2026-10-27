@@ -1,5 +1,5 @@
-name: Driftless
-description: Docs that never drift. Checks every PR for stale docs, runs the documented examples, and opens fixes.
+name: Driftless Docs Check
+description: Runs every example in your docs against your real app on each PR, and fixes the ones that drift.
 author: debopamghosh12
 branding:
   icon: book-open
