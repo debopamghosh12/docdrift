@@ -151,11 +151,10 @@ def _execute_all(
     settings: "Settings",
     console: Console,
 ) -> "ExecutionReport":
-    from pathlib import Path
-
     from driftless.doc_editor import proposed_docs
     from driftless.example_fixer import ExampleFixer
     from driftless.executable_docs import execute_all_docs
+    from driftless.sandbox import SandboxLimits
     from driftless.execution_report import render_execution
     from driftless.sync import executable_docs
 
@@ -166,8 +165,7 @@ def _execute_all(
             proposals,
             min_confidence,
             ExampleFixer(llm),
-            Path(settings.sandbox_cache_dir),
-            settings.sandbox_startup_timeout,
+            SandboxLimits.from_settings(settings),
             progress=status.update,
         )
     render_execution(report, console, title="Executed examples")
@@ -335,8 +333,8 @@ def action(
 
 @app.command()
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Bind host."),
-    port: int = typer.Option(8000, help="Bind port."),
+    host: str = typer.Option("127.0.0.1", help="Bind host (0.0.0.0 in a container)."),
+    port: int = typer.Option(8000, envvar="PORT", help="Bind port (or the PORT env var, as set by Render)."),
 ) -> None:
     """Start the webhook server and the web app (/, POST /webhook, GET /health, GET /runs)."""
     import logging

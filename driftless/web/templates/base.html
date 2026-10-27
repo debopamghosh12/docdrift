@@ -40,9 +40,30 @@
         <a href="/" class="hover:text-white">Repos</a>
         <a href="/runs" class="hidden sm:inline hover:text-white">/runs JSON</a>
         <a href="/health" class="hidden sm:inline hover:text-white">/health</a>
+        {% if demo and demo.public %}
+        {% if demo.admin %}
+        <form action="/admin/logout" method="post" class="flex items-center gap-2">
+          <span class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-xs font-medium text-emerald-300 ring-1 ring-emerald-400/30">admin</span>
+          <button class="hover:text-white">Log out</button>
+        </form>
+        {% else %}
+        <a href="/admin" class="hover:text-white">Admin</a>
+        {% endif %}
+        {% endif %}
       </nav>
     </div>
   </header>
+  {% if demo and demo.public %}
+  <div class="border-b border-cyan-400/20 bg-cyan-400/5">
+    <p class="mx-auto max-w-6xl px-4 py-2 text-sm text-cyan-100">
+      <strong class="font-semibold">Public demo</strong> — checks run against an allow-listed repo.
+      <a href="https://github.com/debopamghosh12/driftless#install" target="_blank" rel="noopener" class="underline decoration-cyan-300/40 underline-offset-4 hover:text-white">Install Driftless</a>
+      or use the
+      <a href="https://github.com/debopamghosh12/driftless#use-as-a-github-action" target="_blank" rel="noopener" class="underline decoration-cyan-300/40 underline-offset-4 hover:text-white">GitHub Action</a>
+      to run it on your own repos.
+    </p>
+  </div>
+  {% endif %}
   <main class="mx-auto max-w-6xl px-4 py-8 sm:py-10">
     {% block content %}{% endblock %}
   </main>

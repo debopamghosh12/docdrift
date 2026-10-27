@@ -27,6 +27,7 @@ from driftless.events import EventKind, EventPlan, route_event
 from driftless.jobs import Enqueued, Job, JobMode, JobStore, Syncer
 from driftless.memory import Memory
 from driftless.web import install_web
+from driftless.web.access import redact
 from driftless.web.github_browser import RepoBrowser
 
 logger = logging.getLogger("driftless.server")
@@ -67,7 +68,7 @@ def create_app(
 
     @app.get("/runs")
     def runs() -> list[Job]:
-        return store.recent()
+        return [job.model_copy(update={"error": redact(job.error, settings) or None}) for job in store.recent()]
 
     @app.post("/webhook")
     async def webhook(

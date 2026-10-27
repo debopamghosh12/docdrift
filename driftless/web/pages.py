@@ -21,14 +21,14 @@ def page_routes(state: WebState) -> APIRouter:
 
     @router.get("/")
     def home(request: Request) -> HTMLResponse:
-        return state.render(request, "home.html", allowed=state.allowed.exact)
+        return state.render(request, "home.html", allowed=shortcuts(state))
 
     @router.get("/open")
     def open_repo(request: Request, repo: str = "") -> Response:
         parsed = parse_repo(repo)
         if parsed is None:
             error = "Enter a repository as owner/name, e.g. debopamghosh12/driftless-demo."
-            return state.render(request, "home.html", 400, allowed=state.allowed.exact, error=error, value=repo)
+            return state.render(request, "home.html", 400, allowed=shortcuts(state), error=error, value=repo)
         return RedirectResponse(f"/r/{parsed[0]}/{parsed[1]}", status_code=303)
 
     @router.get("/r/{owner}/{name}")
@@ -79,6 +79,13 @@ def page_routes(state: WebState) -> APIRouter:
         return state.render(request, "repo/setup.html", **ctx)
 
     return router
+
+
+def shortcuts(state: WebState) -> list[str]:
+    """Repos linked from the home page: FEATURED_REPOS (if allowed), then exact ALLOWED_REPOS rules."""
+    featured = [r.strip() for r in state.settings.featured_repos.split(",") if r.strip()]
+    repos = [r for r in featured if parse_repo(r) and state.allowed.allows(r)] + state.allowed.exact
+    return list(dict.fromkeys(r.lower() for r in repos))
 
 
 def _dashboard(state: WebState, owner: str, name: str, tab: str) -> dict[str, Any]:

@@ -15,7 +15,6 @@ import logging
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from driftless.app_env import AppEnv, app_env
 from driftless.doc_editor import proposed_docs
@@ -28,7 +27,7 @@ from driftless.executor import ExampleRun, run_examples
 from driftless.llm import LLMError
 from driftless.models import DocFile
 from driftless.proposals import DocProposals
-from driftless.sandbox import Sandbox, SandboxError
+from driftless.sandbox import Sandbox, SandboxError, SandboxLimits
 
 log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
@@ -343,13 +342,18 @@ def execute_docs(
     files: dict[str, str],
     docs: dict[str, str],
     fixer: ExampleFixer | None,
-    cache_dir: Path = Path(".driftless_cache"),
-    startup_timeout: float = 30.0,
+    limits: SandboxLimits = SandboxLimits(),
     progress: Progress | None = None,
     python: str | None = None,
 ) -> ExecutionReport:
-    sandbox = Sandbox(files, cache_dir=cache_dir, python=python, startup_timeout=startup_timeout)
-    return DocRunner(sandbox, fixer, progress=progress).execute(docs, files)
+    sandbox = Sandbox(
+        files,
+        cache_dir=limits.cache_dir,
+        python=python,
+        startup_timeout=limits.startup_timeout,
+        install_timeout=limits.install_timeout,
+    )
+    return DocRunner(sandbox, fixer, request_timeout=limits.request_timeout, progress=progress).execute(docs, files)
 
 
 def execute_all_docs(
@@ -358,8 +362,7 @@ def execute_all_docs(
     proposals: DocProposals,
     min_confidence: float,
     fixer: ExampleFixer | None,
-    cache_dir: Path = Path(".driftless_cache"),
-    startup_timeout: float = 30.0,
+    limits: SandboxLimits = SandboxLimits(),
     progress: Progress | None = None,
     python: str | None = None,
 ) -> ExecutionReport:
@@ -368,6 +371,4 @@ def execute_all_docs(
     Unchanged files run too: a PR that only changes runtime behavior (a status code, a response
     field) breaks examples that static analysis has no reason to look at.
     """
-    return execute_docs(
-        files, proposed_docs(docs, proposals, min_confidence), fixer, cache_dir, startup_timeout, progress, python
-    )
+    return execute_docs(files, proposed_docs(docs, proposals, min_confidence), fixer, limits, progress, python)

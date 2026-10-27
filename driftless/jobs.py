@@ -141,6 +141,13 @@ class JobLog(Protocol):
     def interrupt_unfinished(self) -> int: ...
 
 
+class JobRefused(Exception):
+    """An `admit` check declined to start a new job (the message says why, for the user)."""
+
+
+Admit = Callable[[list["Job"]], None]  # given the active jobs; raises JobRefused to decline
+
+
 class Enqueued(NamedTuple):
     job: Job
     created: bool
@@ -170,14 +177,18 @@ class JobStore:
         command: str | None = None,
         comment_id: int | None = None,
         ref: str | None = None,
+        admit: Admit | None = None,
     ) -> Enqueued:
         """A redelivery (same mode and head) gets the active job back; a newer push or the merge
-        supersedes an active pre-merge check."""
+        supersedes an active pre-merge check. `admit` runs (under the lock) only when a new job
+        would be created, so limits never refuse showing a run that is already going."""
         key = _key(repo, pr, mode, comment_id, ref)
         with self._lock:
             active = self._active.get(key)
             if active and not _supersedes(active, mode, head_sha):
                 return Enqueued(active, False)
+            if admit is not None:
+                admit(list(self._active.values()))
             job = Job(
                 id=uuid.uuid4().hex[:12], repo=repo, pr=pr, mode=mode, head_sha=head_sha,
                 requested_by=requested_by, command=command, comment_id=comment_id, ref=ref, queued_at=time.time(),

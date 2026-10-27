@@ -1,0 +1,22 @@
+# Keep secrets, local state and caches out of the image.
+.env
+.env.*
+!.env.example
+.venv/
+.driftless_cache/
+*.db
+*.sqlite3
+.git/
+.github/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+.vscode/
+.idea/
+.claude/

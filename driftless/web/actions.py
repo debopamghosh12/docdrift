@@ -1,7 +1,8 @@
 """Web actions (POST): start jobs, change memory, connect the webhook. Plus job polling.
 
 Every long run is a job in the same store the webhook uses, started after the response is sent;
-the page polls `GET /jobs/{id}` for its stage and result.
+the page polls `GET /jobs/{id}` for its stage and result. On the public demo, every action that
+writes to GitHub requires an admin session, and job starts go through the demo's limits.
 """
 
 import re
@@ -38,13 +39,16 @@ def action_routes(state: WebState) -> APIRouter:
         repo = state.repo(owner, name)
         ref = ref.strip() or repo.default_branch
         if not _REF_RE.match(ref) or ".." in ref:
-            return _notice(state, request, "That isn't a branch, tag or commit name.", 400)
+            return notice(state, request, "That isn't a branch, tag or commit name.", 400)
         if not state.settings.execute_examples:
-            return _notice(state, request, "Running examples is turned off on this instance (EXECUTE_EXAMPLES=false).", 409)
+            return notice(state, request, "Running examples is turned off on this instance (EXECUTE_EXAMPLES=false).", 409)
         if fix and not (state.settings.github_token and state.settings.llm_api_key):
-            return _notice(state, request, "Fixing examples needs GITHUB_TOKEN and LLM_API_KEY on the server.", 409)
+            return notice(state, request, "Fixing examples needs GITHUB_TOKEN and LLM_API_KEY on the server.", 409)
+        if fix:
+            state.demo.require_write(request)
         mode = JobMode.FIX_EXAMPLES if fix else JobMode.CHECK
-        return _start(state, request, background, state.store.enqueue(repo.full_name, 0, mode, ref=ref))
+        admit = state.demo.admit(request, repo.full_name)
+        return _start(state, request, background, state.store.enqueue(repo.full_name, 0, mode, ref=ref, admit=admit))
 
     @router.post("/r/{owner}/{name}/pulls/{number}/{action}")
     def pull_action(
@@ -53,28 +57,33 @@ def action_routes(state: WebState) -> APIRouter:
         repo = state.repo(owner, name).full_name
         pull = state.browser.pull(repo, number)
         if pull.own:
-            return _notice(state, request, "This is one of Driftless's own docs PRs; it is never analyzed.", 409)
-        store = state.store
+            return notice(state, request, "This is one of Driftless's own docs PRs; it is never analyzed.", 409)
+        store, admit = state.store, state.demo.admit(request, repo)
         if action == "analyze":
             if pull.state == "closed":
-                return _notice(state, request, "This PR was closed without merging; there is nothing to sync.", 409)
-            return _start(state, request, background, store.enqueue(repo, number, JobMode.ANALYZE))
+                return notice(state, request, "This PR was closed without merging; there is nothing to sync.", 409)
+            return _start(state, request, background, store.enqueue(repo, number, JobMode.ANALYZE, admit=admit))
+        if action in ("premerge", "docs-pr", "apply"):
+            state.demo.require_write(request)
         if action == "premerge" and pull.state == "open":
-            return _start(state, request, background, store.enqueue(repo, number, JobMode.PRE_MERGE, head_sha=pull.head_sha))
+            enqueued = store.enqueue(repo, number, JobMode.PRE_MERGE, head_sha=pull.head_sha, admit=admit)
+            return _start(state, request, background, enqueued)
         if action == "docs-pr" and pull.state == "merged":
-            return _start(state, request, background, store.enqueue(repo, number, JobMode.POST_MERGE))
+            return _start(state, request, background, store.enqueue(repo, number, JobMode.POST_MERGE, admit=admit))
         if action == "apply" and pull.state == "open":
             if not pull.same_repo:
-                return _notice(state, request, "This PR's branch is in a fork, which Driftless can't push to.", 409)
+                return notice(state, request, "This PR's branch is in a fork, which Driftless can't push to.", 409)
             login = state.browser.login()
             if not login:
-                return _notice(state, request, "Applying fixes needs GITHUB_TOKEN on the server.", 409)
-            return _start(state, request, background, store.enqueue(repo, number, JobMode.APPLY, requested_by=login))
-        return _notice(state, request, f"“{action}” isn't available for a {pull.state} pull request.", 409)
+                return notice(state, request, "Applying fixes needs GITHUB_TOKEN on the server.", 409)
+            enqueued = store.enqueue(repo, number, JobMode.APPLY, requested_by=login, admit=admit)
+            return _start(state, request, background, enqueued)
+        return notice(state, request, f"“{action}” isn't available for a {pull.state} pull request.", 409)
 
     @router.post("/r/{owner}/{name}/memory/{verb}")
     def memory(request: Request, owner: str, name: str, verb: str, value: str = Form("")) -> HTMLResponse:
         repo = state.repo(owner, name)
+        state.demo.require_write(request)
         command = parse_command(f"/driftless {verb} {value.strip()}")  # same rules as a PR comment
         if command is None or command.name in (CommandName.APPLY, CommandName.MEMORY):
             message, ok = "Enter a value (at most 300 characters).", False
@@ -86,6 +95,7 @@ def action_routes(state: WebState) -> APIRouter:
     @router.post("/r/{owner}/{name}/webhook")
     def connect_webhook(request: Request, owner: str, name: str, url: str = Form("")) -> HTMLResponse:
         repo = state.repo(owner, name)
+        state.demo.require_write(request)
         url = url.strip()
         ctx = setup_context(state, repo)
         parts = urlsplit(url)
@@ -132,7 +142,7 @@ def _start(state: WebState, request: Request, background: BackgroundTasks, enque
     return state.render(request, "partials/job.html", 202 if enqueued.created else 200, reused=not enqueued.created, **ctx)
 
 
-def _notice(state: WebState, request: Request, message: str, status_code: int) -> HTMLResponse:
+def notice(state: WebState, request: Request, message: str, status_code: int) -> HTMLResponse:
     # htmx only swaps 2xx responses into the page; plain requests get the real status.
     status_code = 200 if request.headers.get("HX-Request") else status_code
     return state.render(request, "partials/notice.html", status_code, message=message)

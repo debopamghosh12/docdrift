@@ -1,6 +1,7 @@
 {% from "macros.html" import button, card_open %}
 {% set base = "/r/" ~ repo.full_name ~ "/memory/" %}
 {% set target = 'hx-target="#memory-panel" hx-swap="innerHTML"' %}
+{% set locked = not demo.can_write %}
 <div class="space-y-6">
   {% if message %}
   <p class="rounded-lg p-3 text-sm ring-1 {{ 'bg-emerald-400/10 text-emerald-200 ring-emerald-400/30' if ok else 'bg-amber-400/10 text-amber-200 ring-amber-400/30' }}">{{ message | code }}</p>
@@ -15,7 +16,7 @@
           <code class="truncate font-mono text-sm text-slate-100">{{ rule }}</code>
           <form hx-post="{{ base }}unignore" {{ target | safe }}>
             <input type="hidden" name="value" value="{{ rule }}">
-            <button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>
+            {% if locked %}<span title="{{ demo.admin_only }}"><button type="button" disabled class="text-xs text-rose-300/50 cursor-not-allowed">Remove</button></span>{% else %}<button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>{% endif %}
           </form>
         </li>
         {% else %}
@@ -25,7 +26,7 @@
       <form class="mt-4 flex gap-2" hx-post="{{ base }}ignore" {{ target | safe }}>
         <input name="value" required maxlength="300" placeholder="CHANGELOG.md or Legacy API" aria-label="Ignore rule"
                class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60">
-        {{ button("Add", "secondary") }}
+        {{ button("Add", "secondary", locked=locked) }}
       </form>
     </section>
 
@@ -36,7 +37,7 @@
           <span class="text-sm text-slate-100"><span class="mr-2 text-slate-500">{{ loop.index }}.</span>{{ note }}</span>
           <form hx-post="{{ base }}unstyle" {{ target | safe }}>
             <input type="hidden" name="value" value="{{ loop.index }}">
-            <button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>
+            {% if locked %}<span title="{{ demo.admin_only }}"><button type="button" disabled class="text-xs text-rose-300/50 cursor-not-allowed">Remove</button></span>{% else %}<button class="text-xs text-rose-300 hover:text-rose-200" hx-disabled-elt="this">Remove</button>{% endif %}
           </form>
         </li>
         {% else %}
@@ -46,7 +47,7 @@
       <form class="mt-4 flex gap-2" hx-post="{{ base }}style" {{ target | safe }}>
         <input name="value" required maxlength="300" placeholder="keep examples minimal" aria-label="Style preference"
                class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60">
-        {{ button("Add", "secondary") }}
+        {{ button("Add", "secondary", locked=locked) }}
       </form>
     </section>
   </div>

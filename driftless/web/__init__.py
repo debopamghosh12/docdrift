@@ -2,7 +2,7 @@
 
 Jinja2 templates + htmx + Tailwind (CDN), no build step. Long runs are jobs in the server's
 JobStore; pages poll them. Only repos on ALLOWED_REPOS are served, since every action uses the
-server's GITHUB_TOKEN.
+server's GITHUB_TOKEN. With PUBLIC_DEMO, writes to GitHub need an admin session (`demo.py`).
 """
 
 from fastapi import FastAPI, Request
@@ -10,10 +10,12 @@ from fastapi.responses import HTMLResponse
 from github import GithubException
 
 from driftless.config import Settings
-from driftless.jobs import JobStore
+from driftless.jobs import JobRefused, JobStore
 from driftless.memory import Memory
 from driftless.web.access import AllowedRepos
-from driftless.web.actions import action_routes
+from driftless.web.actions import action_routes, notice
+from driftless.web.admin import admin_routes
+from driftless.web.demo import ADMIN_ONLY, AdminRequired, DemoGuard
 from driftless.web.github_browser import GitHubBrowser, RepoBrowser
 from driftless.web.pages import page_routes
 from driftless.web.state import NotEnabled, WebState, make_templates
@@ -29,9 +31,19 @@ def install_web(
         browser=browser or GitHubBrowser(settings.github_token or None),
         templates=make_templates(settings),
         allowed=AllowedRepos(settings.allowed_repos),
+        demo=DemoGuard(settings),
     )
     app.include_router(page_routes(state))
     app.include_router(action_routes(state))
+    app.include_router(admin_routes(state))
+
+    @app.exception_handler(AdminRequired)
+    def admin_required(request: Request, exc: AdminRequired) -> HTMLResponse:
+        return notice(state, request, f"{ADMIN_ONLY}: this writes to GitHub. Log in under Admin to use it.", 403)
+
+    @app.exception_handler(JobRefused)
+    def job_refused(request: Request, exc: JobRefused) -> HTMLResponse:
+        return notice(state, request, str(exc), 429)
 
     @app.exception_handler(NotEnabled)
     def not_enabled(request: Request, exc: NotEnabled) -> HTMLResponse:

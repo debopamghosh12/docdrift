@@ -1,0 +1,41 @@
+# Render blueprint: the Driftless public demo on the free plan.
+# New → Blueprint → this repo; Render asks for the `sync: false` values (secrets) once.
+services:
+  - type: web
+    name: driftless
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Secrets: entered in the Render dashboard, never committed.
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      # Public demo: anyone can run checks and analyses; writes to GitHub need the admin login.
+      - key: PUBLIC_DEMO
+        value: "true"
+      - key: ALLOWED_REPOS
+        value: debopamghosh12/*
+      - key: FEATURED_REPOS
+        value: debopamghosh12/driftless-demo
+      # Render's proxy appends the client address to X-Forwarded-For (used by the per-IP limit).
+      - key: CLIENT_IP_HEADER
+        value: X-Forwarded-For
+      # 512 MB / 0.5 vCPU: modest timeouts, state under /tmp (reset on every deploy).
+      - key: SANDBOX_STARTUP_TIMEOUT
+        value: "25"
+      - key: SANDBOX_INSTALL_TIMEOUT
+        value: "240"
+      - key: EXAMPLE_REQUEST_TIMEOUT
+        value: "5"
+      - key: DATABASE_URL
+        value: sqlite:////tmp/driftless.db
+      - key: SANDBOX_CACHE_DIR
+        value: /tmp/driftless_cache

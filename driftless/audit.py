@@ -2,7 +2,6 @@
 repo's docs at a ref against its app; with `fix`, repair broken examples and open one PR."""
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from driftless.config import Settings
@@ -10,6 +9,7 @@ from driftless.doc_editor import unified_diff
 from driftless.execution import ExecutionReport
 from driftless.pr_writer import PublishResult
 from driftless.progress import Stage, StageProgress, silent
+from driftless.sandbox import SandboxLimits
 
 if TYPE_CHECKING:
     from driftless.example_fixer import ExampleFixer
@@ -65,8 +65,7 @@ def run_audit(
         files,
         originals,
         fixer,
-        Path(settings.sandbox_cache_dir),
-        settings.sandbox_startup_timeout,
+        SandboxLimits.from_settings(settings),
         lambda message: progress(Stage.RUN, message),
     )
     audit = AuditResult(repo=repo, ref=ref, report=report, originals=originals, fix=fix)

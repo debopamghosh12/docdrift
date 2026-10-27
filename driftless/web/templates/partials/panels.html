@@ -139,7 +139,7 @@
 <form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center" hx-post="/r/{{ job.repo }}/check" hx-target="#check-panel" hx-swap="innerHTML">
   <input type="hidden" name="ref" value="{{ v.ref }}">
   <input type="hidden" name="fix" value="true">
-  {{ button("Fix broken examples (open PR)") }}
+  {{ button("Fix broken examples (open PR)", locked=not demo.can_write) }}
   <span class="text-xs text-slate-500">Same as <code class="code">driftless check --fix</code>: re-runs the examples, asks the model to fix the earliest failing one in each file, keeps a fix only if it passes when run, and opens one PR from <code class="code">driftless/fix-examples</code>.</span>
 </form>
 {% endif %}

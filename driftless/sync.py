@@ -116,8 +116,6 @@ def analyze_and_propose(
 ) -> tuple["AnalysisResult", "DocProposals"]:
     """Analyze -> LLM rewrites + verification -> executed examples. `checkpoint` runs between
     stages (pre-merge checks raise SupersededError there once a newer push arrived)."""
-    from pathlib import Path
-
     from driftless.analyzer import Analyzer
     from driftless.pipeline import analyze_pull_request
 
@@ -133,6 +131,7 @@ def analyze_and_propose(
     if settings.execute_examples:
         from driftless.example_fixer import ExampleFixer
         from driftless.executable_docs import execute_all_docs
+        from driftless.sandbox import SandboxLimits
 
         progress(Stage.START, "Installing the app's dependencies (cached after the first run) and starting it...")
         proposals.execution = execute_all_docs(
@@ -141,8 +140,7 @@ def analyze_and_propose(
             proposals,
             min_confidence,
             ExampleFixer(llm),
-            Path(settings.sandbox_cache_dir),
-            settings.sandbox_startup_timeout,
+            SandboxLimits.from_settings(settings),
             progress=lambda message: progress(Stage.RUN, message),
         )
         checkpoint(result)
@@ -157,11 +155,10 @@ def mark_baseline(
     Runs the base's docs against the base's app (no fixer) only when the head had failing or
     fixed examples, and indexes the base's code only when there are stale sections to classify.
     """
-    from pathlib import Path
-
     from driftless.baseline import mark_pre_existing, needs_baseline
     from driftless.code_index import build_code_index
     from driftless.executable_docs import execute_docs
+    from driftless.sandbox import SandboxLimits
 
     examples, sections = needs_baseline(proposals)
     if not (examples or sections):
@@ -174,8 +171,7 @@ def mark_baseline(
             client.fetch_files(repo, base),
             {d.path: d.content for d in base_docs if result.memory.ignoring_file_rule(d.path) is None},
             None,
-            Path(settings.sandbox_cache_dir),
-            settings.sandbox_startup_timeout,
+            SandboxLimits.from_settings(settings),
         )
     base_code = build_code_index(client.fetch_sources(repo, base)) if sections else None
     mark_pre_existing(proposals, result.code, base_docs, base_code, base_execution)

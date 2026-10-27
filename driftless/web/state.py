@@ -15,6 +15,7 @@ from driftless.config import Settings
 from driftless.jobs import Job, JobStore
 from driftless.memory import Memory
 from driftless.web.access import AllowedRepos, redact, valid_repo
+from driftless.web.demo import DemoGuard
 from driftless.web.github_browser import RepoBrowser, RepoSummary
 
 _CODE_RE = re.compile(r"`([^`]+)`")
@@ -36,6 +37,7 @@ class WebState:
     browser: RepoBrowser
     templates: Jinja2Templates
     allowed: AllowedRepos
+    demo: DemoGuard
 
     def repo(self, owner: str, name: str) -> RepoSummary:
         """The repo, if this instance may act on it (raises NotEnabled before any API call)."""
@@ -50,6 +52,7 @@ class WebState:
         return job if job is not None and self.allowed.allows(job.repo) else None
 
     def render(self, request: Request, template: str, status_code: int = 200, **context: Any) -> HTMLResponse:
+        context.setdefault("demo", self.demo.context(request))
         return self.templates.TemplateResponse(request, template, context, status_code=status_code)
 
 

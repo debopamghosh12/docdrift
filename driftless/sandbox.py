@@ -23,8 +23,12 @@ from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from driftless.config import Settings
 
 IS_WINDOWS = os.name == "nt"
 # Env var names never passed to the app: our own credentials.
@@ -35,6 +39,25 @@ _PREFERRED_APP_FILES = ("main.py", "app.py", "server.py", "api.py", "asgi.py")
 
 class SandboxError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class SandboxLimits:
+    """Where venvs are cached and how long each step may take (small hosts want tighter ones)."""
+
+    cache_dir: Path = Path(".driftless_cache")
+    startup_timeout: float = 30.0  # until the app answers HTTP
+    install_timeout: float = 600.0  # building a venv for new requirements
+    request_timeout: float = 10.0  # each documented request
+
+    @classmethod
+    def from_settings(cls, settings: "Settings") -> "SandboxLimits":
+        return cls(
+            Path(settings.sandbox_cache_dir),
+            settings.sandbox_startup_timeout,
+            settings.sandbox_install_timeout,
+            settings.example_request_timeout,
+        )
 
 
 @dataclass(frozen=True)

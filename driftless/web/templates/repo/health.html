@@ -1,6 +1,6 @@
 {% extends "repo/layout.html" %}
 {% from "macros.html" import button, card_open %}
-{% from "partials/panels.html" import job_panel %}
+{% from "partials/panels.html" import job_panel with context %}
 {% block tab %}
 {{ card_open("Docs health audit", "Runs every request example in the docs (`curl` in shell blocks, `http` blocks) against the repo's FastAPI app, started from the ref you pick — a fresh app per doc file, examples in document order. Same as `driftless check`.") }}
   {% if execute_examples %}
