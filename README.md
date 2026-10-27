@@ -7,8 +7,9 @@
 [![tests: 320 passing](https://img.shields.io/badge/tests-320%20passing-brightgreen)](tests/)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue)](pyproject.toml)
 [![GitHub Action v1](https://img.shields.io/badge/GitHub%20Action-v1-2088FF?logo=githubactions&logoColor=white)](action.yml)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Driftless%20Docs%20Check-2ea44f?logo=github)](https://github.com/marketplace/actions/driftless-docs-check)
 
-🌐 [Live demo](https://driftless-vqms.onrender.com) · 🎥 Demo video *(coming soon)* <!-- TODO: link the demo video --> · ⚡ [GitHub Action](#use-as-a-github-action) · 📦 [Install](#install)
+🌐 [Live demo](https://driftless-vqms.onrender.com) · 🎥 Demo video *(coming soon)* <!-- TODO: link the demo video --> · ⚡ [GitHub Action](#use-as-a-github-action) · 🛒 [GitHub Marketplace](https://github.com/marketplace/actions/driftless-docs-check) · 📦 [Install](#install)
 
 ![A Driftless pre-merge comment: the PR breaks a documented example, with the proposed doc fix and the executed examples](docs/images/premerge-comment.png)
 
@@ -287,6 +288,8 @@ The command goes on the comment's first line. Quotes or backticks around the arg
 ## Use as a GitHub Action
 
 Any repo can run Driftless in its own GitHub Actions, with nothing to host: no server, no webhook, no database.
+
+It's published on the GitHub Marketplace as **[Driftless Docs Check](https://github.com/marketplace/actions/driftless-docs-check)**. The first release is [v1.0.0](https://github.com/debopamghosh12/driftless/releases/tag/v1.0.0). Use `debopamghosh12/driftless@v1` to get every v1.x update, or `@v1.0.0` to pin this exact release.
 
 1. **Copy the workflow.** Save [`examples/driftless-workflow.yml`](examples/driftless-workflow.yml) as `.github/workflows/driftless.yml` in your repo. It uses `debopamghosh12/driftless@v1`, triggers on pull requests, PR comments, a manual dispatch and a weekly schedule, and grants `contents`, `pull-requests`, `issues` and `statuses` write.
 2. **Add the LLM key as a secret.** Get a Groq API key at <https://console.groq.com/keys>, then in your repo: **Settings → Secrets and variables → Actions → New repository secret**, name `GROQ_API_KEY`. The workflow's own `GITHUB_TOKEN` is used for GitHub, so no other secret is needed.
