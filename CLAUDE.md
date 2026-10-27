@@ -52,7 +52,7 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/examples.py` — runnable examples from markdown (curl in shell blocks, `http` blocks) + documented status/JSON; documented env defaults
 - `driftless/sandbox.py` — find the FastAPI app (ast), cached venv under `.driftless_cache/`, uvicorn on a free port, kill the process tree
 - `driftless/trust.py` — whose code may run: merged PRs, same-repo PR heads by writers, branches/tags/default-branch commits for audits; never forks (fails closed)
-- `driftless/isolation.py` — sandbox hardening: allow-listed env, wheels-only plain requirements, `SANDBOX_USER` privilege drop + prlimit + locked venvs (Linux, root server), reap leftovers
+- `driftless/isolation.py` — sandbox hardening: allow-listed env, wheels-only plain requirements, `SANDBOX_USER` privilege drop + prlimit + locked venvs (Linux, root server), reap leftovers; `resolve_sandbox_user` probes the switch once and falls back to the server's user with a report note where the host refuses it (Render)
 - `driftless/executor.py` — run examples in order against the app; status must match, JSON structure must match (ids/timestamps flexible, value diffs = warnings)
 - `driftless/echo.py` — after an accepted fix: request-body values it changed are updated in documented responses (same file, that example on) that echo them, only where the live response confirms; never in requests
 - `driftless/example_fixer.py` — LLM fix of a failing example from the actual request/response; deterministic tidy of the fix
@@ -78,7 +78,7 @@ It remembers past decisions and reviewer feedback in a SQLite memory.
 - `driftless/repo_config.py` — `.driftless.yml` (ignore/style) from the default branch -> in-memory `Memory`; Action-mode replies to memory commands (the exact YAML to commit)
 - `driftless/doctor.py` — `driftless doctor` checks (Python, secrets set, LLM answers, token permissions via empty-POST 422-vs-403 probes); never prints secrets
 - `driftless/init_env.py` — `driftless init`: merge GITHUB_TOKEN / LLM_API_KEY into ./.env, gitignore check
-- `Dockerfile` / `.dockerignore` / `render.yaml` — container for `driftless serve` (PORT env, state under /tmp) and the Render free-tier public-demo blueprint
+- `Dockerfile` / `.dockerignore` / `render.yaml` — container for `driftless serve` (PORT env, state under /tmp; runs as non-root `driftless`, `--user root` enables the `sandbox` user switch) and the Render free-tier public-demo blueprint
 - `action.yml` — composite GitHub Action (setup-python, pip install the action path, `driftless action`); `examples/driftless-workflow.yml` — copy-ready workflow
 - `driftless/cli.py` — typer CLI (`driftless init` / `driftless doctor [--repo]`; `driftless action` in GitHub Actions; `driftless run --repo owner/name --pr N [--dry-run] [--min-confidence 0.5] [--no-execute]`; without --dry-run opens the docs PR; `driftless check --repo owner/name [--ref main] [--fix]` audits every doc example; `driftless serve` starts the webhook server + web app on :8000)
 - `tests/` — pytest

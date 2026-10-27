@@ -60,6 +60,8 @@ class DocRunner:
         try:
             with self._sandbox as box:
                 report.app = box.target.spec if box.target else None
+                if box.isolation_note:
+                    report.notes.append(box.isolation_note)
                 for path, text in runnable.items():
                     self._progress(f"Running examples in {path}...")
                     try:

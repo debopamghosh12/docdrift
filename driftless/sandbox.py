@@ -8,7 +8,7 @@ process, so killing the parent alone would leave the server running).
 
 This runs the repository's code on this machine: trust.py decides whose code that may be, and
 isolation.py keeps it away from Driftless's secrets (clean env, wheels-only installs, and on
-Linux an unprivileged SANDBOX_USER with process limits).
+Linux an unprivileged SANDBOX_USER with process limits, where the host allows the switch).
 """
 
 import ast
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from driftless.isolation import IsolationError, SandboxUser, active, clean_env, safe_requirements, sandbox_user
+from driftless.isolation import IsolationError, SandboxUser, active, clean_env, resolve_sandbox_user, safe_requirements
 
 if TYPE_CHECKING:
     from driftless.config import Settings
@@ -202,6 +202,8 @@ def _build_venv(requirements: str, cache_dir: Path, key: str, timeout: float, us
                 raise SandboxError(f"installing requirements timed out after {timeout:.0f}s") from exc
             except subprocess.CalledProcessError as exc:
                 raise SandboxError(f"{Path(step[0]).name} failed: {(exc.stderr or exc.stdout).strip()[-800:]}") from exc
+            except OSError as exc:  # e.g. the user switch refused after all
+                raise SandboxError(f"could not start {Path(step[0]).name}: {exc}") from exc
         if user is not None:
             try:
                 user.lock(venv)
@@ -236,21 +238,22 @@ class Sandbox:
         self._install_timeout = install_timeout
         self._user_name = user
         self._user: SandboxUser | None = None
+        self.isolation_note: str | None = None  # set when SANDBOX_USER couldn't be used on this host
         self.target = find_fastapi_app(files)
         self._workdir: Path | None = None
 
     def __enter__(self) -> "Sandbox":
         if self.target is None:
             raise SandboxError("no FastAPI app found (expected a module-level `app = FastAPI(...)`)")
-        try:
-            self._user = sandbox_user(self._user_name)
-        except IsolationError as exc:
-            raise SandboxError(str(exc)) from exc
+        self._user, self.isolation_note = resolve_sandbox_user(self._user_name)
         self._workdir = Path(tempfile.mkdtemp(prefix="driftless-sandbox-"))
         try:
             self._write_files(self._workdir.resolve())
             if self._user is not None:
-                self._user.give(self._workdir)
+                try:
+                    self._user.give(self._workdir)
+                except OSError as exc:
+                    raise SandboxError(f"could not hand the sandbox to {self._user.name}: {exc}") from exc
             if self._python is None:
                 requirements = self._files.get("requirements.txt", "fastapi\n")
                 self._python = str(
@@ -292,16 +295,19 @@ class Sandbox:
         active.enter()
         try:
             with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-                process = subprocess.Popen(
-                    user.limited(command, serve=True) if user else command,
-                    cwd=self._workdir,
-                    env=sandbox_env(env or {}, unset, home=self._workdir),
-                    stdin=subprocess.DEVNULL,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    close_fds=True,
-                    **extra,
-                )
+                try:
+                    process = subprocess.Popen(
+                        user.limited(command, serve=True) if user else command,
+                        cwd=self._workdir,
+                        env=sandbox_env(env or {}, unset, home=self._workdir),
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        close_fds=True,
+                        **extra,
+                    )
+                except OSError as exc:
+                    raise SandboxError(f"could not start the app: {exc}") from exc
                 try:
                     base_url = f"http://127.0.0.1:{port}"
                     self._wait_until_up(process, base_url, log_path)

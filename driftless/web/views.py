@@ -67,6 +67,7 @@ class ExamplesView:
     errors: list[str]
     headline: str
     consequence: str = ""
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -131,6 +132,7 @@ def examples_view(report: ExecutionReport) -> ExamplesView:
         errors=report.errors,
         headline=headline,
         consequence=consequence_sentence(impact) if impact.roots else "",
+        notes=report.notes,
     )
 
 

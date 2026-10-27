@@ -64,6 +64,7 @@ class ExecutionReport(BaseModel):
     outcomes: list[ExampleOutcome] = Field(default_factory=list)
     contents: dict[str, str] = Field(default_factory=dict)  # final text of every executed file
     errors: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)  # how the examples ran (e.g. sandbox isolation fallback)
     app: str | None = None  # "app.main:app"
 
     @property

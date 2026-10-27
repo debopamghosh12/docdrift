@@ -220,6 +220,52 @@ def test_sandbox_user_requires_root() -> None:
         sandbox_user("nobody")
 
 
+def test_a_host_that_forbids_the_user_switch_falls_back_with_one_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import driftless.isolation as isolation
+
+    def refused(user: isolation.SandboxUser) -> None:
+        raise PermissionError(1, "Operation not permitted")  # Render: setgroups/setuid in the child
+
+    monkeypatch.setattr(isolation, "IS_WINDOWS", False)
+    monkeypatch.setattr(isolation, "_resolved", {})
+    monkeypatch.setattr(isolation, "sandbox_user", lambda name: isolation.SandboxUser(name, 10002, 10002))
+    monkeypatch.setattr(isolation, "_probe", refused)
+    with caplog.at_level("WARNING", logger="driftless.isolation"):
+        first = isolation.resolve_sandbox_user("sandbox")
+        second = isolation.resolve_sandbox_user("sandbox")
+    user, note = first
+    assert user is None and note is not None and "Operation not permitted" in note
+    assert second == first
+    assert len([r for r in caplog.records if "SANDBOX_USER=sandbox" in r.getMessage()]) == 1
+    assert isolation.resolve_sandbox_user("") == (None, None)
+
+
+def test_the_fallback_runs_the_examples_and_notes_it_in_the_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    import driftless.sandbox
+    from driftless.executable_docs import DocRunner
+    from tests.test_sandbox import fixture_files
+
+    note = "Examples ran as the server's own user (with a clean environment): ..."
+    monkeypatch.setattr(driftless.sandbox, "resolve_sandbox_user", lambda name: (None, note))
+    files = fixture_files()
+    docs = {p: t for p, t in files.items() if p.endswith(".md")}
+    report = DocRunner(Sandbox(files, python=sys.executable, user="sandbox")).execute(docs, files)
+    assert report.notes == [note] and report.errors == [] and report.outcomes
+
+
+@pytest.mark.skipif(os.name == "nt" or not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs non-root on Linux")
+def test_a_non_root_server_falls_back_instead_of_failing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import driftless.isolation as isolation
+
+    monkeypatch.setattr(isolation, "_resolved", {})
+    user, note = isolation.resolve_sandbox_user("nobody")
+    assert user is None and note is not None and "root" in note
+
+
 @pytest.mark.skipif(os.name == "nt" or not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root on Linux")
 def test_locking_a_venv_never_follows_links_out_of_it(tmp_path: Path) -> None:
     import pwd

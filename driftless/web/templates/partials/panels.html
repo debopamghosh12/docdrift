@@ -89,6 +89,9 @@
 </div>
 <p class="mt-4 text-sm text-slate-300">{{ ex.headline | code }} {{ ex.consequence | code }}</p>
 {% if ex.app %}<p class="mt-1 text-xs text-slate-500">Run against <code class="code">{{ ex.app }}</code>, a fresh app per doc file.</p>{% endif %}
+{% for note in ex.notes %}
+<p class="mt-1 text-xs text-slate-500">ℹ️ {{ note | redact }}</p>
+{% endfor %}
 {% for error in ex.errors %}
 <p class="mt-2 rounded-lg bg-amber-400/10 p-2 font-mono text-xs text-amber-200 ring-1 ring-amber-400/30 break-words">⚠️ {{ error | redact }}</p>
 {% endfor %}

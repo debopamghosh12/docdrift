@@ -15,6 +15,8 @@ _LABELS = {
 
 
 def render_execution(report: ExecutionReport, console: Console, title: str = "Executed examples") -> None:
+    for note in report.notes:
+        console.print(f"[dim]Sandbox: {escape(note)}[/]")
     for error in report.errors:
         console.print(f"[red]Sandbox:[/] {escape(error)}")
     if not report.outcomes:

@@ -50,8 +50,10 @@ execution. Driftless runs only code that someone with write access put into the 
 - **Safe installs.** `requirements.txt` may contain only `package[extras]<version>` lines. Options
   are refused (`-r /proc/1/environ` would echo a file into the error message), and so are URLs,
   VCS references and paths. Packages are installed with `--only-binary :all:`, so no `setup.py` runs.
-- **Unprivileged user (Linux, Docker image).** The server runs as root only so that it can start
-  every install and app as the `sandbox` user (`SANDBOX_USER`). The probe below confirms that this
+- **Unprivileged user (Linux, where the host allows it).** Started with `--user root`, the Docker
+  image's server can start every install and app as the `sandbox` user (`SANDBOX_USER`). By
+  default the image runs as the unprivileged `driftless` user instead, because some hosts
+  (Render) refuse the switch; see the fallback below. The probe below confirms that this
   user can't read `/proc/<server>/environ` or `/proc/1/environ` (the secrets), the SQLite job
   database (the server's umask is `077`), or write the cached venvs. Venvs are built as `sandbox`
   with a fresh `HOME` per build (no shared download cache), then made root-owned and read-only,
@@ -62,6 +64,13 @@ execution. Driftless runs only code that someone with write access put into the 
   `SANDBOX_USER` refuses to run without `prlimit`. Daemons the app double-forks are killed
   whenever no install or app is running, which under constant load can be later than the end of
   their own run.
+- **Fallback when the switch isn't permitted.** On first use the server tries the switch once
+  (chown a temp dir to the user, start a process as that user under `prlimit`). If the host
+  refuses it (not root, or no `CAP_SETUID`/`CAP_SETGID`: CPython's child-side `setgroups()` /
+  `setresgid()` / `setresuid()` fail with `EPERM`), installs and apps run as the server's own
+  user with the same clean environment and wheels-only installs. A warning is logged once, and
+  every report carries a note saying so. The job never fails for this, and the trust gate is
+  unchanged.
 - **Lifetime.** Each app gets a fresh temp directory and is bound to `127.0.0.1` on a free port. Its
   whole process tree is killed after its examples, and inherited file descriptors are closed.
   Install, startup and request timeouts apply.
@@ -159,9 +168,18 @@ These are known and accepted for this project's scope:
 - **Network egress.** The app under test can reach the internet: it needs PyPI to install, and a
   per-process network namespace isn't available on Render. Trusted code could still exfiltrate
   whatever it can read, but it can't read Driftless's secrets.
-- **Without `SANDBOX_USER`** (the CLI on a laptop, a non-root server, macOS or Windows), the app
-  runs as your user. The environment is clean, but a malicious app could still read
-  `/proc/<ppid>/environ` or your `.env` file. This is why only trusted code is ever run.
+- **Without the user switch** (the CLI on a laptop, macOS or Windows, `SANDBOX_USER` unset, or a
+  host that refuses it), the app runs as the server's user. The environment is clean, but a
+  malicious app could still read `/proc/<ppid>/environ` (the secrets), the job database, the
+  venv cache or your `.env` file. This is why only trusted code is ever run.
+- **The public demo on Render runs in this fallback.** Render's containers don't allow
+  `setuid`/`setgid` (every check failed with `PermissionError: [Errno 1] Operation not permitted`
+  until the fallback was added on 2026-10-27), so the image runs as the unprivileged `driftless`
+  user and the app under test runs as `driftless` too. It can't modify the installed server or
+  system files, but it can read the server's secrets. The demo only runs code from
+  `ALLOWED_REPOS` that someone with write access committed, and its token should be scoped to
+  those repos. For a stronger boundary, run Driftless on a host that allows the switch
+  (`docker run --user root ...`), or in a disposable VM.
 - **Venv reuse.** A venv is shared by every repo with the same `requirements.txt`. It is locked
   (root-owned, read-only) once built, but a package downloaded from PyPI isn't checked against
   hashes unless the repo pins them.

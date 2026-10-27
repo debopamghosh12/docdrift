@@ -211,7 +211,7 @@ driftless check --repo owner/name --fix                  # fix broken examples, 
 
 It exits with status 1 if any example is still failing, so it can gate CI. With `--fix`, the repaired files are committed to `driftless/fix-examples` and a PR is opened (or updated on reruns). As with docs PRs, a file that changed on the default branch since `--ref` is never overwritten.
 
-> **Security note.** Executable docs **run the repository's code on your machine**: its `requirements.txt` is installed and its app is started. Only code someone with write access put in the repository is ever run: a branch, tag or default-branch commit, a merged PR, or a same-repo PR whose author has write access. Never a fork's code. Requirements are installed from wheels only (plain `package==version` lines; no `-r`, URLs or paths). The app is a subprocess bound to `127.0.0.1` with an allow-listed environment (never your credentials), and its process tree is always killed afterwards. In the Docker image it also runs as an unprivileged `sandbox` user that can't read the server's secrets. See [SECURITY.md](SECURITY.md) for the threat model and the residual risks.
+> **Security note.** Executable docs **run the repository's code on your machine**: its `requirements.txt` is installed and its app is started. Only code someone with write access put in the repository is ever run: a branch, tag or default-branch commit, a merged PR, or a same-repo PR whose author has write access. Never a fork's code. Requirements are installed from wheels only (plain `package==version` lines; no `-r`, URLs or paths). The app is a subprocess bound to `127.0.0.1` with an allow-listed environment (never your credentials), and its process tree is always killed afterwards. Where the host allows a user switch (the Docker image started with `--user root`), it also runs as an unprivileged `sandbox` user that can't read the server's secrets. Hosts that refuse it, like Render, run it as the server's own unprivileged user with the clean environment, and the report says so. See [SECURITY.md](SECURITY.md) for the threat model and the residual risks.
 
 ## Running as a GitHub webhook
 
@@ -384,7 +384,7 @@ Full threat model, protections and residual risks: [SECURITY.md](SECURITY.md).
 
 - Executable docs need a **FastAPI** app (a module-level `app = FastAPI(...)`) and examples written as `curl` in shell blocks or raw `http` blocks aimed at `localhost`. Examples with shell variables (`$TOKEN`) or other hosts are skipped.
 - Symbol extraction is exact for Python (`ast`) and regex-based for JS/TS.
-- The sandbox is a subprocess (an unprivileged user in Docker), not a container: it has network access. See [SECURITY.md](SECURITY.md).
+- The sandbox is a subprocess (a separate unprivileged user where the host allows the switch; not on Render), not a container: it has network access. See [SECURITY.md](SECURITY.md).
 - The LLM is paced to Groq's free tier (8000 tokens/minute), so a large PR takes a while.
 - In Action mode nothing persists between runs: memory lives in `.driftless.yml`, and docs-PR feedback isn't kept. On the free Render plan, history and memory reset on every redeploy.
 - The pre-merge result is a commit status, not a Checks API run, so a personal token is enough. It has no annotations.

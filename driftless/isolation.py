@@ -12,19 +12,28 @@ Defense in depth behind trust.py (which decides *whose* code may run at all):
   (root-owned, read-only), and gets process/file limits via `prlimit`. Leftover processes of
   that user (double-forked daemons) are killed whenever no install or app is running.
 
+Hosts that don't allow the user switch (Render's containers: no setuid/setgid) fall back to
+the clean environment as the server's own user, with a warning logged once and a note in the
+report (`resolve_sandbox_user`); the trust gate stays the primary defense.
+
 Residual risk (SECURITY.md): network egress is open, and without SANDBOX_USER the app runs as
 the server's own user.
 """
 
+import logging
 import os
 import re
 import shutil
 import signal
 import stat
+import subprocess
+import sys
+import tempfile
 import threading
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 IS_WINDOWS = os.name == "nt"
 # Passed through from the host: what Python, uv and pip need to start, nothing that identifies us.
@@ -41,6 +50,7 @@ _REQUIREMENT_RE = re.compile(
 )
 PROCESS_LIMITS = ("--nproc=256", "--nofile=1024")
 SERVE_LIMITS = ("--fsize=268435456",)  # 256 MB per file written by the app
+log = logging.getLogger(__name__)
 
 
 class IsolationError(RuntimeError):
@@ -153,6 +163,55 @@ def sandbox_user(name: str) -> SandboxUser | None:
     if shutil.which("prlimit") is None:
         raise IsolationError("SANDBOX_USER needs prlimit (util-linux) to limit the app's processes")
     return SandboxUser(name, entry.pw_uid, entry.pw_gid)
+
+
+_resolved: dict[str, tuple[SandboxUser | None, str | None]] = {}
+_resolved_lock = threading.Lock()
+
+
+def resolve_sandbox_user(name: str) -> tuple[SandboxUser | None, str | None]:
+    """The user to drop to, or (None, note) when SANDBOX_USER is set but the switch isn't possible here.
+
+    The switch is tried once per process (chown a temp dir, start a process as the user under
+    prlimit); on hosts that forbid it the app runs as the server's own user with the clean
+    environment, the warning is logged once, and the note goes into every report."""
+    if not name or IS_WINDOWS:
+        return None, None
+    with _resolved_lock:
+        if name not in _resolved:
+            _resolved[name] = _resolve(name)
+        return _resolved[name]
+
+
+def _resolve(name: str) -> tuple[SandboxUser | None, str | None]:
+    try:
+        user = sandbox_user(name)
+        if user is not None:
+            _probe(user)
+        return user, None
+    except (IsolationError, OSError, subprocess.SubprocessError) as exc:
+        reason = f"{type(exc).__name__}: {exc}" if not isinstance(exc, IsolationError) else str(exc)
+        log.warning("SANDBOX_USER=%s is unavailable on this host (%s); apps run as the server's user", name, reason)
+        note = (
+            f"Examples ran as the server's own user (with a clean environment): switching to "
+            f"SANDBOX_USER isn't permitted on this host ({reason})."
+        )
+        return None, note
+
+
+def _probe(user: SandboxUser) -> None:
+    """Raise if this host forbids what the sandbox does as root: chown to the user, then setgroups/setgid/setuid."""
+    probe = Path(tempfile.mkdtemp(prefix="driftless-probe-"))
+    try:
+        user.give(probe)
+        drop: dict[str, Any] = user.popen_kwargs()
+        subprocess.run(
+            user.limited([sys.executable, "-c", ""], serve=False),
+            check=True, capture_output=True, timeout=30, cwd=probe, env=clean_env({}),
+            stdin=subprocess.DEVNULL, **drop,
+        )
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
 
 
 class _Active:
