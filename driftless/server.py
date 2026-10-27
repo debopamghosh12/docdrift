@@ -62,7 +62,7 @@ def create_app(
     app.state.memory = memory
     app.state.web = install_web(app, settings, store, memory, browser)
 
-    @app.get("/health")
+    @app.api_route("/health", methods=["GET", "HEAD"])  # uptime monitors often send HEAD
     def health() -> dict[str, str]:
         return {"status": "ok"}
 

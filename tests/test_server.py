@@ -227,6 +227,13 @@ def test_health() -> None:
     assert make_client(FakeSync()).get("/health").json() == {"status": "ok"}
 
 
+def test_health_and_home_answer_head() -> None:
+    client = make_client(FakeSync())
+    for path in ("/health", "/"):
+        response = client.head(path)
+        assert response.status_code == 200 and response.content == b""
+
+
 # --- pre-merge mode ----------------------------------------------------------------------------
 
 

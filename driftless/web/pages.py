@@ -19,7 +19,7 @@ PR_MODES = frozenset({JobMode.ANALYZE, JobMode.PRE_MERGE, JobMode.POST_MERGE, Jo
 def page_routes(state: WebState) -> APIRouter:
     router = APIRouter(default_response_class=HTMLResponse)
 
-    @router.get("/")
+    @router.api_route("/", methods=["GET", "HEAD"])
     def home(request: Request) -> HTMLResponse:
         return state.render(request, "home.html", allowed=shortcuts(state))
 
