@@ -88,8 +88,9 @@ jobs:
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph triggers["Triggers"]
+        direction LR
         WH["GitHub webhook<br/>(driftless serve)"]
         GA["GitHub Action<br/>(driftless action)"]
         WEB["Web app / CLI"]
